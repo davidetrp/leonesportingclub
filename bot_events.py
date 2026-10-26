@@ -260,7 +260,9 @@ class BotEvents:
             log.info("Link non seguito: %s", e)
             return None
 
-    async def _complete(self, url: str, report: dict, label: str) -> None:
+    async def _complete(self, url: str, report: dict, label: str, rejoin: bool = False) -> None:
+        """rejoin=True: il bot segna il canale in rosso anche se ci sei già dentro (conta solo chi entra
+        dal suo link), quindi esco e rientro da quel link."""
         kind, key = link_kind(url)
         for attempt in range(2):
             try:
@@ -268,7 +270,19 @@ class BotEvents:
                     res = await self.client(functions.messages.CheckChatInviteRequest(key))
                     label = getattr(getattr(res, "chat", None), "title", None) or getattr(res, "title", None) or label
                     if isinstance(res, types.ChatInviteAlready):
-                        report["already"].append(label)
+                        if not rejoin:
+                            report["already"].append(label)
+                            return
+                        await self.client(functions.channels.LeaveChannelRequest(res.chat))
+                        await asyncio.sleep(3)
+                        try:
+                            await self.client(functions.messages.ImportChatInviteRequest(key))
+                            report["rejoined"].append(label)
+                        except Exception as e:  # noqa: BLE001
+                            if "INVITE_REQUEST_SENT" in str(e) or isinstance(e, errors.InviteRequestSentError):
+                                report["requested"].append(label)
+                            else:
+                                report["failed"].append(f"{label} (uscito ma non rientrato: {e})")
                         return
                     await self.client(functions.messages.ImportChatInviteRequest(key))
                     report["joined"].append(label)
@@ -321,8 +335,8 @@ class BotEvents:
     async def unlock(self) -> dict:
         """Completa i requisiti del bot: entra nei canali col pallino rosso (o ne chiede l'accesso),
         avvia i bot indicati e preme Sblocca. Le pagine web le lascia da aprire all'utente."""
-        report = {"joined": [], "already": [], "requested": [], "bots": [], "skipped": [], "failed": [],
-                  "manual": [], "clicked": [], "ok": False, "message": "", "buttons": []}
+        report = {"joined": [], "rejoined": [], "already": [], "requested": [], "bots": [], "skipped": [],
+                  "failed": [], "manual": [], "clicked": [], "ok": False, "message": "", "buttons": []}
         async with self._lock:
             bot = await self.client.get_input_entity(self.bot)
             await self.client.send_message(bot, "/start")
@@ -353,13 +367,13 @@ class BotEvents:
                         report["failed"].append(f"{l['text']} (troppi canali in una volta, riprova tra poco)")
                         continue
                     joins += 1
-                    await self._complete(url, report, l["text"])
+                    await self._complete(url, report, l["text"], rejoin=True)
                     if report.get("stop"):
                         break
                     await asyncio.sleep(4)
                 if report.get("stop"):
                     break
-                await asyncio.sleep(2)
+                await asyncio.sleep(6)          # il bot ha bisogno di qualche secondo per vedere gli ingressi
                 if not verify:
                     break
                 b = verify[0]

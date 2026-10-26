@@ -598,7 +598,7 @@ footer { font-size: .82rem; color: var(--muted); }
     var btn = $("unlockBtn");
     if (!unlockArmed) {
       unlockArmed = true; btn.classList.add("armed"); btn.textContent = "Conferma";
-      evNote("Il server entrerà con il tuo account nei canali che il bot richiede e premerà «Sblocca». Tocca «Conferma» per procedere.");
+      evNote("Il server entrerà con il tuo account nei canali col pallino rosso. Se sei già dentro, ne esce e rientra dal link del bot, che è l'unico che il bot conta. Poi preme «Sblocca». Tocca «Conferma» per procedere.");
       return;
     }
     unlockArmed = false; btn.classList.remove("armed"); btn.disabled = true; btn.textContent = "Sblocco…";
@@ -608,7 +608,7 @@ footer { font-size: .82rem; color: var(--muted); }
       if (r.error) { evNote(r.error); return; }
       renderManual(r.manual || []);
       var parts = [r.ok ? "✅ Lista sbloccata." : (r.manual && r.manual.length ? "Manca un passaggio da fare tu: apri il link qui sopra, poi tocca di nuovo Sblocca." : "La lista non risulta ancora sbloccata."),
-        joinList("Entrato in", r.joined), joinList("Già dentro", r.already), joinList("Richiesta inviata (attende approvazione)", r.requested),
+        joinList("Entrato in", r.joined), joinList("Rientrato dal link del bot", r.rejoined), joinList("Già dentro", r.already), joinList("Richiesta inviata (attende approvazione)", r.requested),
         joinList("Bot avviati", r.bots), joinList("Non riusciti", r.failed), r.message ? "Il bot dice: " + r.message : "",
         !r.ok && r.buttons && r.buttons.length ? "Bottoni del bot: " + r.buttons.join(" | ") : ""];
       evNote(parts.filter(Boolean).join(" · "));

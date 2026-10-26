@@ -16,6 +16,7 @@ import json
 import logging
 import random
 import secrets
+import time
 from dataclasses import dataclass
 
 from telethon import TelegramClient, errors, utils
@@ -26,6 +27,9 @@ from chunks import CHUNK_MS, ChunkNotReady, NotLive, Resync, Unsupported  # noqa
 log = logging.getLogger("telegram_live")
 
 GETFILE_LIMIT = 1024 * 1024
+CHANNELS_MIN_GAP = 5.0
+_channels_lock = asyncio.Lock()
+_last_channels_call = 0.0
 
 
 # --------------------------------------------------------------------------- live lookup
@@ -116,7 +120,7 @@ class CallReader:
                 pause = max(1, e.seconds) + 0.5
                 if waited + pause > max_wait:
                     raise
-                log.info("Telegram chiede una pausa di %ss, aspetto", e.seconds)
+                log.debug("Telegram chiede una pausa di %ss, aspetto", e.seconds)
                 await asyncio.sleep(pause)
                 waited += pause
 
@@ -174,23 +178,43 @@ class CallReader:
         except Exception as e:  # noqa: BLE001 - l'uscita è "best effort"
             log.debug("leave: %s", e)
 
-    async def stream_end_ms(self) -> int | None:
-        """Timestamp (ms) dell'ultimo chunk disponibile, o None se il trasmettitore è fermo."""
-        res = await self._patient(lambda: self._invoke_stream_dc(
-            functions.phone.GetGroupCallStreamChannelsRequest(call=self.info.call)))
+    async def stream_end_ms(self, max_wait: int = 12) -> int | None:
+        """Timestamp (ms) dell'ultimo chunk disponibile, o None se il trasmettitore è fermo.
+        Telegram limita molto questa richiesta: al massimo una ogni CHANNELS_MIN_GAP secondi per tutto il server."""
+        global _last_channels_call
+        async with _channels_lock:
+            gap = CHANNELS_MIN_GAP - (time.monotonic() - _last_channels_call)
+            if gap > 0:
+                await asyncio.sleep(gap)
+            try:
+                res = await self._patient(lambda: self._invoke_stream_dc(
+                    functions.phone.GetGroupCallStreamChannelsRequest(call=self.info.call)), max_wait=max_wait)
+            finally:
+                _last_channels_call = time.monotonic()
         if not res.channels:
             return None
         return max(c.last_timestamp_ms for c in res.channels)
 
+    def server_now_ms(self) -> int:
+        offset = getattr(getattr(getattr(self.client, "_sender", None), "_state", None), "time_offset", 0) or 0
+        return int((time.time() + offset) * 1000)
+
     async def start_ms(self, buffer_ms: int = 3000) -> int:
-        deadline = asyncio.get_running_loop().time() + 60
+        deadline = asyncio.get_running_loop().time() + 45
         while asyncio.get_running_loop().time() < deadline:
-            end = await self.stream_end_ms()
+            try:
+                end = await self.stream_end_ms()
+            except errors.FloodWaitError:
+                # Telegram non ci dà la fine dello stream: parto dall'ora del server, come fanno i client
+                # ufficiali per le dirette in modalità stream.
+                start = (self.server_now_ms() // CHUNK_MS) * CHUNK_MS - buffer_ms - 2000
+                log.info("Punto di partenza dall'ora del server: %s", start)
+                return start
             if end:
                 start = (end // CHUNK_MS) * CHUNK_MS - buffer_ms
                 if start > 0:
                     return start
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
         raise NotLive()
 
     async def fetch(self, time_ms: int) -> bytes:

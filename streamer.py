@@ -139,7 +139,10 @@ class TelegramSource:
     async def next(self):
         self.jumped = False
         if self.count and self.count % RESYNC_EVERY == 0:
-            end = await self.reader.stream_end_ms()
+            try:
+                end = await self.reader.stream_end_ms(max_wait=0)
+            except Exception:  # noqa: BLE001 - controllo facoltativo
+                end = None
             if end and self.time_ms < end - MAX_LAG_MS:
                 log.info("Troppo indietro di %d ms: salto avanti", end - self.time_ms)
                 self.time_ms = (end // CHUNK_MS) * CHUNK_MS - 2000
@@ -153,10 +156,14 @@ class TelegramSource:
                 await asyncio.sleep(0.1)
                 waited += 0.1
                 if waited > 20:
-                    end = await self.reader.stream_end_ms()
-                    if end is None:
+                    try:
+                        end = await self.reader.stream_end_ms(max_wait=10)
+                    except Exception:  # noqa: BLE001
+                        end = -1                     # non sappiamo: riprovo ancora un po'
+                    if end is None or waited > 60:
                         raise NotLive()
-                    waited = 0.0
+                    if end != -1:
+                        waited = 0.0
             except Resync as e:
                 log.info("Risincronizzo: %s", e)
                 self.time_ms = await self.reader.start_ms()

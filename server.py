@@ -263,6 +263,11 @@ async def play(request: Request):
     if not config.DEMO and not App.live:
         return JSONResponse({"stream": "error", "message": App.tg_error}, status_code=503)
     s = streamer(cid)
+    if request.method == "POST":
+        # Un solo canale alla volta, come un telecomando: fermo gli altri (meno richieste a Telegram).
+        for other_id, other in list(App.streamers.items()):
+            if other_id != cid and other.running:
+                await other.stop()
     if request.method == "POST" and s.state in ("idle", "offline", "error", "unsupported"):
         App.live_cache.pop(ch["peer_id"], None)
         s.start()
