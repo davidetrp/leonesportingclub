@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import ssl
 import time
 import urllib.error
@@ -33,7 +34,14 @@ LEAGUES = [
     ("fra.1", "Ligue 1", 8),
     ("fifa.world", "Mondiali", 0),
     ("uefa.nations", "Nations League", 2),
+    ("ita.2", "Serie B", 9),
+    ("ita.3", "Serie C", 10),          # se ESPN non ce l'ha, la Serie C arriva da TheSportsDB
 ]
+
+# Seconda fonte gratuita (TheSportsDB) per le serie minori italiane che ESPN non copre bene.
+SPORTSDB_URL = "https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={day}&s=Soccer"
+MINOR = [(re.compile(r"serie\s*c|lega\s*pro", re.I), "Serie C", 10),
+         (re.compile(r"serie\s*b", re.I), "Serie B", 9)]
 
 _cache: dict[str, tuple[float, dict]] = {}
 
@@ -93,6 +101,51 @@ def parse_events(data: dict, league: str, priority: int, day) -> list[dict]:
     return out
 
 
+def _norm_team(name: str) -> str:
+    return re.sub(r"[^a-z]", "", (name or "").lower())[:6]
+
+
+def parse_sportsdb(data: dict, day) -> list[dict]:
+    out = []
+    for ev in (data or {}).get("events") or []:
+        league = ev.get("strLeague") or ""
+        hit = next(((n, p) for rx, n, p in MINOR if rx.search(league) and "women" not in league.lower()
+                    and "femminile" not in league.lower() and "ital" in (league.lower() + (ev.get("strCountry") or "").lower())), None)
+        if not hit:
+            continue
+        ts = ev.get("strTimestamp") or (f"{ev.get('dateEvent')}T{ev.get('strTime') or '00:00:00'}")
+        try:
+            start = datetime.fromisoformat(ts.replace("Z", "")[:19]).replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            continue
+        local = start.astimezone(TZ)
+        if local.date() != day:
+            continue
+        status = (ev.get("strStatus") or "").upper()
+        hs, as_ = ev.get("intHomeScore"), ev.get("intAwayScore")
+        if status in ("FT", "AET", "PEN", "MATCH FINISHED", "FINISHED"):
+            state = "post"
+        elif status in ("", "NS", "NOT STARTED", "TBD", "POSTP", "POSTPONED", "CANC") or hs in (None, ""):
+            state = "pre"
+        else:
+            state = "in"
+        out.append({
+            "id": "tsdb-" + str(ev.get("idEvent")),
+            "league": hit[0] + (f" · {m.group(1).upper()}" if (m := re.search(r"(?:girone|group)\s*([abc])", league, re.I)) else ""),
+            "priority": hit[1],
+            "start": start.isoformat(),
+            "time": local.strftime("%H:%M"),
+            "home": ev.get("strHomeTeam") or "?",
+            "away": ev.get("strAwayTeam") or "?",
+            "home_score": str(hs) if state != "pre" and hs not in (None, "") else None,
+            "away_score": str(as_) if state != "pre" and as_ not in (None, "") else None,
+            "state": state,
+            "detail": ((f"{ev['strProgress']}'" if str(ev.get("strProgress") or "").isdigit() else ev.get("strProgress"))
+                       or status) if state == "in" else "",
+        })
+    return out
+
+
 async def today_matches() -> dict:
     now = datetime.now(TZ)
     day = now.date()
@@ -118,16 +171,28 @@ async def today_matches() -> dict:
             log.info("Partite %s non disponibili: %s", code, e)
             return None
 
-    results = await asyncio.gather(*(one(*lg) for lg in LEAGUES))
+    async def sportsdb():
+        try:
+            data = await asyncio.to_thread(_get_json, SPORTSDB_URL.format(day=day.isoformat()))
+            res = parse_sportsdb(data, day)
+            log.info("Serie minori da TheSportsDB: %d partite", len(res))
+            return res
+        except Exception as e:  # noqa: BLE001
+            log.info("TheSportsDB non disponibile: %s", e)
+            return None
+
+    results = await asyncio.gather(*(one(*lg) for lg in LEAGUES), sportsdb())
     if all(r is None for r in results) and cached:
         return cached[1]
     matches = [m for r in results if r for m in r]
-    seen = set()
+    seen, pairs = set(), set()
     unique = []
-    for m in matches:
-        if m["id"] in seen:
+    for m in matches:                     # ESPN prima, poi TheSportsDB: niente doppioni
+        pair = (_norm_team(m["home"]), _norm_team(m["away"]))
+        if m["id"] in seen or pair in pairs:
             continue
         seen.add(m["id"])
+        pairs.add(pair)
         unique.append(m)
     unique.sort(key=lambda m: (m["start"], m["priority"]))
     res = {"date": key, "updated": now.strftime("%H:%M"), "matches": unique,
