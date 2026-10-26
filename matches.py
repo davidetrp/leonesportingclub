@@ -9,6 +9,7 @@ import json
 import logging
 import ssl
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -16,7 +17,7 @@ from zoneinfo import ZoneInfo
 log = logging.getLogger("matches")
 
 TZ = ZoneInfo("Europe/Rome")
-URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/{code}/scoreboard?dates={dates}"
+URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/{code}/scoreboard"
 CACHE_S = 120
 
 # (codice ESPN, nome mostrato, priorità: più basso = più importante)
@@ -99,12 +100,19 @@ async def today_matches() -> dict:
     cached = _cache.get(key)
     if cached and time.monotonic() - cached[0] < CACHE_S:
         return cached[1]
-    # ESPN usa giorni in fuso USA: chiedo ieri-oggi-domani e filtro sull'ora italiana.
-    dates = f"{(day - timedelta(days=1)):%Y%m%d}-{(day + timedelta(days=1)):%Y%m%d}"
+    # Le partite europee cadono nello stesso giorno anche in fuso USA: chiedo la data di oggi
+    # e filtro comunque sull'ora italiana. Se ESPN rifiuta il parametro, uso la giornata corrente.
+    dates = f"{day:%Y%m%d}"
 
     async def one(code, name, prio):
+        base = URL.format(code=code)
         try:
-            data = await asyncio.to_thread(_get_json, URL.format(code=code, dates=dates))
+            try:
+                data = await asyncio.to_thread(_get_json, f"{base}?dates={dates}")
+            except urllib.error.HTTPError as e:
+                if e.code != 400:
+                    raise
+                data = await asyncio.to_thread(_get_json, base)
             return parse_events(data, name, prio, day)
         except Exception as e:  # noqa: BLE001
             log.info("Partite %s non disponibili: %s", code, e)
