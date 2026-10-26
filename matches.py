@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import ssl
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -36,9 +37,21 @@ LEAGUES = [
 _cache: dict[str, tuple[float, dict]] = {}
 
 
+def _ssl_context() -> ssl.SSLContext:
+    # Il Python del Mac spesso non trova i certificati di sistema: uso quelli di certifi.
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
+SSL_CTX = _ssl_context()
+
+
 def _get_json(url: str) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 CanaliSport"})
-    with urllib.request.urlopen(req, timeout=10) as r:
+    with urllib.request.urlopen(req, timeout=10, context=SSL_CTX) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
