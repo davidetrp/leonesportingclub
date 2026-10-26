@@ -295,6 +295,8 @@ EVENTS_CACHE_S = 90
 
 
 async def get_events(refresh: bool = False) -> list[dict]:
+    if not config.EVENTS_BOT:
+        return []
     if config.DEMO:
         return demo_events()
     if not App.events:
