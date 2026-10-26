@@ -263,7 +263,7 @@ class BotEvents:
             return f"pagina web ({host})"
         return kind
 
-    async def _follow(self, url: str) -> str | None:
+    async def _follow(self, url: str, scan_body: bool = True) -> str | None:
         """Segue i reindirizzamenti di un link di canale finché arriva a un link Telegram (senza aprirlo)."""
         from matches import SSL_CTX
         tg = re.compile(r"(?:https?://)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s\"'<>]+|tg://[^\s\"'<>]+", re.I)
@@ -284,6 +284,8 @@ class BotEvents:
                 with opener.open(req, timeout=10) as r:
                     if tg.match(r.geturl()):
                         return r.geturl()
+                    if not scan_body:
+                        return None
                     body = r.read(300_000).decode("utf-8", "replace")
                     m = tg.search(body)
                     return m.group(0) if m else None
@@ -421,8 +423,12 @@ class BotEvents:
                         report["manual"].append({"text": l["text"], "url": l["url"]})
                         self._step(f"«{name}» va aperto da te.")
                         continue
-                    if kind == "web" and not l["webapp"] and re.search(r"canal|grupp|channel|group", l["text"], re.I):
-                        found = await self._follow(url)
+                    if kind == "web" and not l["webapp"]:
+                        # Canali: seguo i reindirizzamenti fino al link Telegram. Altri link (es. APRI IL LINK):
+                        # solo se reindirizzano dritti a Telegram; se aprono una pagina (pubblicità, attese,
+                        # captcha) la lascio all'utente, senza leggerla né simulare la visita.
+                        is_channel = bool(re.search(r"canal|grupp|channel|group", l["text"], re.I))
+                        found = await self._follow(url, scan_body=is_channel)
                         log.info("Sblocco: «%s» porta a %s", l["text"], link_kind(found)[0] if found else "nessun link Telegram")
                         if found:
                             url, kind = found, link_kind(found)[0]
