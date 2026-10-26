@@ -34,7 +34,7 @@ STATIC = config.BASE_DIR / "static"
 HLS_ROOT = config.DATA_DIR / "hls"
 SLOTS_FILE = config.DATA_DIR / "canali.json"
 SECRET_FILE = config.DATA_DIR / "secret.key"
-LIVE_CACHE_S = 60
+LIVE_CACHE_S = 45
 
 
 class App:
@@ -127,12 +127,10 @@ async def live_status(peer_id) -> dict:
         return {"live": None}
     now = time.monotonic()
     cached = App.live_cache.get(peer_id)
-    # Mentre una diretta è in riproduzione non disturbo Telegram con altre richieste di stato.
+    # Mentre una diretta è in riproduzione aggiorno lo stato più di rado (ogni 2 minuti), ma lo aggiorno.
     watching = any(s.running for s in App.streamers.values())
-    if cached and (now - cached[0] < LIVE_CACHE_S or watching):
+    if cached and now - cached[0] < (LIVE_CACHE_S * 2 if watching else LIVE_CACHE_S):
         return cached[1]
-    if watching:
-        return {"live": None}
     try:
         info = await App.live.live_info(int(peer_id))
         res = {"live": False} if info is None else {

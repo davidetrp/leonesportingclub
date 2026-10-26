@@ -20,7 +20,9 @@ import time
 from dataclasses import dataclass
 
 from telethon import TelegramClient, errors, utils
+from telethon.network import MTProtoSender
 from telethon.tl import functions, types
+from telethon.tl.alltlobjects import LAYER
 
 from chunks import CHUNK_MS, ChunkNotReady, NotLive, Resync, Unsupported  # noqa: F401
 
@@ -50,6 +52,8 @@ def _rpc_message(e: Exception) -> str:
 class TelegramLive:
     def __init__(self, client: TelegramClient):
         self.client = client
+        self._media_senders: dict[int, MTProtoSender] = {}
+        self._media_lock = asyncio.Lock()
         # Le attese per "flood" le gestiamo noi: per i chunk significano solo "non ancora pronto".
         self.client.flood_sleep_threshold = 0
 
@@ -84,6 +88,33 @@ class TelegramLive:
             title=getattr(gc, "title", None),
             participants=getattr(gc, "participants_count", 0) or 0,
         )
+
+    async def media_sender(self, dc_id: int) -> MTProtoSender:
+        """Connessione ai server «media» del DC dello stream, come fanno le app ufficiali per le dirette
+        (sui server normali Telegram risponde di continuo FLOOD_WAIT)."""
+        async with self._media_lock:
+            sender = self._media_senders.get(dc_id)
+            if sender is not None and sender.is_connected():
+                return sender
+            client = self.client
+            cfg = await client(functions.help.GetConfigRequest())
+            opts = [o for o in cfg.dc_options if o.id == dc_id and not o.ipv6 and not o.cdn and not o.tcpo_only]
+            media = [o for o in opts if o.media_only]
+            dc = (media or opts)[0]
+            same_dc = dc_id == client.session.dc_id
+            sender = MTProtoSender(client.session.auth_key if same_dc else None, loggers=client._log)
+            await sender.connect(client._connection(dc.ip_address, dc.port, dc.id, loggers=client._log,
+                                                    proxy=client._proxy, local_addr=client._local_addr))
+            if same_dc:
+                client._init_request.query = functions.help.GetConfigRequest()
+            else:
+                auth = await client(functions.auth.ExportAuthorizationRequest(dc_id))
+                client._init_request.query = functions.auth.ImportAuthorizationRequest(id=auth.id, bytes=auth.bytes)
+            await sender.send(functions.InvokeWithLayerRequest(LAYER, client._init_request))
+            log.info("Connessione stream: DC %s, server %s (%s)", dc_id, dc.ip_address,
+                     "media" if dc.media_only else "normale, nessun server media disponibile")
+            self._media_senders[dc_id] = sender
+            return sender
 
     async def _retry_flood(self, request, attempts: int = 3):
         for i in range(attempts):
@@ -125,14 +156,21 @@ class CallReader:
                 waited += pause
 
     async def _invoke_stream_dc(self, request):
-        dc = self.info.dc_id if self.info else None
-        if not dc or dc == self.client.session.dc_id:
-            return await self.client(request)
-        sender = await self.client._borrow_exported_sender(dc)
+        dc = (self.info.dc_id if self.info else None) or self.client.session.dc_id
         try:
+            sender = await self.live.media_sender(dc)
+        except Exception as e:  # noqa: BLE001 - ripiego sulla connessione normale
+            log.info("Server media non raggiungibili (%s): uso la connessione normale", e)
+            sender = None
+        if sender is not None:
             return await self.client._call(sender, request)
+        if dc == self.client.session.dc_id:
+            return await self.client(request)
+        exported = await self.client._borrow_exported_sender(dc)
+        try:
+            return await self.client._call(exported, request)
         finally:
-            await self.client._return_exported_sender(sender)
+            await self.client._return_exported_sender(exported)
 
     # -- lifecycle ------------------------------------------------------------------------
     async def join(self) -> None:
