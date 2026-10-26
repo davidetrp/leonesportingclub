@@ -220,12 +220,36 @@ class BotEvents:
                 links.append({"text": txt.strip(), "url": _norm_url(ent.url), "done": False, "webapp": False})
         seen, out = set(), []
         for l in links:
-            kind, key = link_kind(l["url"])
-            if l["url"] in seen or (key or "").lower() == self.bot.lower():
+            if l["url"] in seen:
                 continue
             seen.add(l["url"])
+            kind, key = link_kind(l["url"])
+            # Link al bot stesso: «?start=codice» si può completare avviando il bot con quel codice;
+            # mini-app (t.me/bot/app) e pagine web invece le apre l'utente.
+            if (key or "").lower() == self.bot.lower():
+                if re.search(r"[?&]start=", l["url"]):
+                    l["self_start"] = True
+                else:
+                    l["webapp"] = True
+            if re.search(r"t\.me/[A-Za-z]\w+/[A-Za-z]\w+(\?|$)", l["url"]) and "startapp" in l["url"] or \
+                    re.search(r"t\.me/[A-Za-z]\w+/[A-Za-z]\w+\?startapp=", l["url"]):
+                l["webapp"] = True
             out.append(l)
         return out, verify
+
+    @staticmethod
+    def _describe(l: dict) -> str:
+        if l["done"]:
+            return "ok"
+        if l.get("self_start"):
+            return "avvio del bot con codice"
+        if l["webapp"]:
+            return "mini-app / da aprire"
+        kind = link_kind(l["url"])[0]
+        if kind == "web":
+            host = re.sub(r"^https?://([^/?#]+).*", r"\1", l["url"])
+            return f"pagina web ({host})"
+        return kind
 
     async def _follow(self, url: str) -> str | None:
         """Segue i reindirizzamenti di un link di canale finché arriva a un link Telegram (senza aprirlo)."""
@@ -360,13 +384,16 @@ class BotEvents:
                 if gate is None:
                     break
                 links, verify = self._gate_buttons(gate)
-                report["buttons"] = [f"{l['text']} → {'ok' if l['done'] else link_kind(l['url'])[0]}" for l in links]
+                report["buttons"] = [f"{l['text']} → {self._describe(l)}" for l in links]
                 log.info("Sblocco: bottoni %s, verifica: %s", report["buttons"], [b.text for b in verify])
                 for l in links:
                     if l["url"] in done_urls or l["done"]:
                         continue
                     done_urls.add(l["url"])
                     url, kind = l["url"], link_kind(l["url"])[0]
+                    if l["webapp"]:
+                        report["manual"].append({"text": l["text"], "url": l["url"]})
+                        continue
                     if kind == "web" and not l["webapp"] and re.search(r"canal|grupp|channel|group", l["text"], re.I):
                         found = await self._follow(url)
                         log.info("Sblocco: «%s» porta a %s", l["text"], link_kind(found)[0] if found else "nessun link Telegram")
