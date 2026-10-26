@@ -244,6 +244,7 @@ footer { font-size: .82rem; color: var(--muted); }
   var currentId = null;
   var editing = null;         // null = canale selezionato, "new" = nuovo canale
   var hls = null, playing = false, statusTimer = null, tuneToken = 0, tgChannels = null, delArmed = false;
+  var nameTouched = false;    // true se il nome è stato scritto a mano
 
   function store(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
   function load(k, d) { try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
@@ -451,7 +452,7 @@ footer { font-size: .82rem; color: var(--muted); }
   }
 
   function fillForm() {
-    editing = null; resetDelete(); note("");
+    editing = null; resetDelete(); note(""); nameTouched = false;
     var c = byId(currentId);
     $("settingsTitle").textContent = c ? "Impostazioni · " + label(c) : "Impostazioni canale";
     $("nameInput").value = c ? c.name || "" : "";
@@ -459,7 +460,7 @@ footer { font-size: .82rem; color: var(--muted); }
     if ($("settings").open) loadTg(c ? c.peer_id : null);
   }
   function openNew() {
-    editing = "new"; resetDelete(); note("");
+    editing = "new"; resetDelete(); note(""); nameTouched = false;
     $("settingsTitle").textContent = "Nuovo canale";
     $("nameInput").value = ""; $("delBtn").hidden = true; $("cancelBtn").hidden = false; $("saveBtn").textContent = "Aggiungi";
     $("settings").open = true; loadTg(null);
@@ -471,9 +472,10 @@ footer { font-size: .82rem; color: var(--muted); }
     var c = editing === "new" ? null : byId(currentId); loadTg(c ? c.peer_id : null);
   });
   $("cancelBtn").addEventListener("click", function () { fillForm(); $("settings").open = false; });
+  $("nameInput").addEventListener("input", function () { nameTouched = $("nameInput").value.trim() !== ""; });
   $("tgSelect").addEventListener("change", function () {
     var opt = $("tgSelect").selectedOptions[0];
-    if (opt && opt.value && !$("nameInput").value.trim()) $("nameInput").value = opt.textContent.replace(/ \((canale|gruppo|demo)\)$/, "").slice(0, 40);
+    if (opt && opt.value && !nameTouched) $("nameInput").value = opt.textContent.replace(/ \((canale|gruppo|demo)\)$/, "").slice(0, 40);
   });
   $("chanForm").addEventListener("submit", function (e) {
     e.preventDefault();
