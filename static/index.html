@@ -89,7 +89,10 @@ h1 { font-family: var(--font-display); font-weight: 900; font-size: 2.3rem; lett
 .watch { appearance: none; border: 0; cursor: pointer; background: var(--accent); color: var(--accent-ink); font-family: var(--font-display); font-weight: 800; font-size: .9rem; letter-spacing: .06em; text-transform: uppercase; padding: 7px 10px; border-radius: 7px; white-space: nowrap; text-decoration: none; }
 .watch.join { background: transparent; color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .watch.armed { background: var(--live); color: #fff; box-shadow: none; }
-.ev-note { padding: 8px 16px 12px; font-size: .8rem; color: var(--muted); margin: 0; }
+.ev-note { padding: 8px 16px 12px; font-size: .8rem; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
+.gate { display: grid; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.gate-text { margin: 0; font-size: .88rem; }
+.gate .watch { justify-self: start; }
 .card .ev { font-size: .78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Monitor */
@@ -188,6 +191,10 @@ footer { font-size: .82rem; color: var(--muted); }
       <div class="rail-card" id="evCard" hidden>
         <div class="rail-head with-btn"><div><h2>Eventi in programma</h2><span class="date" id="evBot"></span></div>
           <button class="mini" id="evRefresh" type="button">Aggiorna</button></div>
+        <div class="gate" id="gate" hidden>
+          <p class="gate-text">Il bot chiede di sbloccare la lista: di solito succede quando esci da uno dei canali richiesti.</p>
+          <button class="watch" id="unlockBtn" type="button">Sblocca</button>
+        </div>
         <ul class="fixtures" id="events"></ul>
         <p class="ev-note" id="evNote" hidden></p>
       </div>
@@ -535,6 +542,7 @@ footer { font-size: .82rem; color: var(--muted); }
     $("evBot").textContent = r.bot ? "da @" + r.bot : "";
     var ul = $("events"); ul.innerHTML = "";
     if (r.error) evNote(r.error);
+    $("gate").hidden = !r.locked;
     if (!list.length) {
       var li = document.createElement("li"); li.className = "rail-empty";
       li.textContent = r.error ? "Lista non disponibile." : "Nessun evento in programma nella lista del bot.";
@@ -580,6 +588,27 @@ footer { font-size: .82rem; color: var(--muted); }
       if (r._status === 409) loadEvents();
     }).catch(function () {});
   }
+  var unlockArmed = false;
+  function joinList(label, arr) { return arr && arr.length ? label + ": " + arr.join(", ") : ""; }
+  $("unlockBtn").addEventListener("click", function () {
+    var btn = $("unlockBtn");
+    if (!unlockArmed) {
+      unlockArmed = true; btn.classList.add("armed"); btn.textContent = "Conferma";
+      evNote("Il server entrerà con il tuo account nei canali che il bot richiede e premerà «Sblocca». Tocca «Conferma» per procedere.");
+      return;
+    }
+    unlockArmed = false; btn.classList.remove("armed"); btn.disabled = true; btn.textContent = "Sblocco…";
+    evNote("Completo i requisiti del bot, può servire qualche secondo…");
+    api("/api/events/unlock", { method: "POST" }).then(function (r) {
+      btn.disabled = false; btn.textContent = "Sblocca";
+      if (r.error) { evNote(r.error); return; }
+      var parts = [r.ok ? "✅ Lista sbloccata." : "La lista non risulta ancora sbloccata.",
+        joinList("Entrato in", r.joined), joinList("Già dentro", r.already), joinList("Richiesta inviata (attende approvazione)", r.requested),
+        joinList("Bot avviati", r.bots), joinList("Non riusciti", r.failed), r.message ? "Il bot dice: " + r.message : ""];
+      evNote(parts.filter(Boolean).join(" · "));
+      loadEvents().then(function () { refresh().catch(function () {}); });
+    }).catch(function () { btn.disabled = false; btn.textContent = "Sblocca"; });
+  });
   function loadEvents(refreshBot) {
     return api("/api/events", refreshBot ? { method: "POST" } : {}).then(renderEvents).catch(function () {});
   }

@@ -322,8 +322,28 @@ async def events(request: Request):
     refresh = request.method == "POST"
     evs = await get_events(refresh=refresh)
     channels = load_channels()
-    return JSONResponse({"bot": config.EVENTS_BOT, "error": App.events_error,
+    locked = bool(App.events and App.events.locked)
+    return JSONResponse({"bot": config.EVENTS_BOT, "error": App.events_error, "locked": locked,
+                         "gate_text": App.events.gate_text if locked else "",
                          "events": [public_event(e, i, channels) for i, e in enumerate(evs)]})
+
+
+async def unlock_events(request: Request):
+    """Completa i requisiti del bot (entra nei canali richiesti e preme Sblocca). Parte solo da un tocco nell'app."""
+    if not is_authed(request):
+        return need_auth()
+    if config.DEMO:
+        return JSONResponse({"ok": True, "joined": ["Canale richiesto (demo)"], "already": [], "requested": [],
+                             "bots": [], "skipped": [], "failed": [], "clicked": ["✅ Sblocca"], "message": ""})
+    if not App.events:
+        return JSONResponse({"error": App.tg_error or "Telegram non collegato."}, status_code=503)
+    try:
+        report = await App.events.unlock()
+    except Exception as e:  # noqa: BLE001
+        log.exception("Sblocco non riuscito")
+        return JSONResponse({"error": f"Sblocco non riuscito: {e}"}, status_code=502)
+    App.events_cache = None
+    return JSONResponse(report)
 
 
 async def watch_event(request: Request):
@@ -438,6 +458,7 @@ routes = [
     Route("/api/matches", matches),
     Route("/api/events", events, methods=["GET", "POST"]),
     Route("/api/events/watch", watch_event, methods=["POST"]),
+    Route("/api/events/unlock", unlock_events, methods=["POST"]),
     Route("/hls/{cid:int}/{file}", hls),
     Mount("/static", StaticFiles(directory=STATIC), name="static"),
 ]

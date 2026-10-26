@@ -92,54 +92,218 @@ def link_kind(url: str) -> tuple[str, str | None]:
     return "web", None
 
 
+GATE_WORDS = ("sblocc", "unisc", "iscriv", "verific", "requisit", "per accedere", "entra nei", "entra nel")
+VERIFY_WORDS = ("sblocc", "verific", "fatto", "controlla", "continua", "conferma", "accedi", "unlock", "check", "done", "✅")
+MAX_JOINS = 12
+
+
+def _norm_url(url: str) -> str:
+    return (url or "").strip()
+
+
 class BotEvents:
     def __init__(self, client, bot_username: str):
         self.client = client
         self.bot = bot_username.lstrip("@")
         self._resolved: dict[str, tuple[float, dict]] = {}
         self._lock = asyncio.Lock()
+        self.locked = False
+        self.gate_text = ""
 
-    async def _latest_list(self, bot):
+    # ---------------------------------------------------------------- lettura
+    @staticmethod
+    def _is_list(m) -> bool:
+        return bool(m and m.message and "EVENTI IN PROGRAMMA" in m.message.upper())
+
+    @staticmethod
+    def _is_gate(m) -> bool:
+        if not m:
+            return False
+        # Serve una parola da «richiesta di sblocco» nel testo: i messaggi pubblicitari del bot
+        # (es. «CLICCA QUI PER IL CANALE») non vanno scambiati per requisiti.
+        text = (m.message or "").lower()
+        return any(w in text for w in GATE_WORDS)
+
+    async def _state(self, bot):
+        """(ultimo messaggio con la lista, ultimo messaggio del bot se è una richiesta di sblocco)."""
         msgs = await self.client.get_messages(bot, limit=20)
-        for m in msgs:
-            if not m.out and m.message and "EVENTI" in m.message.upper():
-                return m
-        return None
+        incoming = [m for m in msgs if not m.out]
+        list_msg = next((m for m in incoming if self._is_list(m)), None)
+        gate = None
+        for m in incoming:                 # dal più recente fino alla lista
+            if m is list_msg:
+                break
+            if self._is_gate(m):
+                gate = m
+                break
+        return list_msg, gate
+
+    def _set_gate(self, gate) -> None:
+        self.locked = gate is not None
+        self.gate_text = (gate.message or "")[:300] if gate is not None else ""
 
     async def fetch(self, refresh: bool = False) -> list[dict]:
         async with self._lock:
             bot = await self.client.get_input_entity(self.bot)
-            msg = await self._latest_list(bot)
-            if msg is None:
+            msg, gate = await self._state(bot)
+            if msg is None and gate is None:
                 log.info("Nessuna lista eventi: mando /start a @%s", self.bot)
                 await self.client.send_message(bot, "/start")
                 await asyncio.sleep(3)
-                msg = await self._latest_list(bot)
-            elif refresh:
+                msg, gate = await self._state(bot)
+            elif refresh and msg is not None and gate is None:
                 try:
                     await msg.click(text=lambda t: "AGGIORNA" in t.upper())
                     await asyncio.sleep(2.5)
-                    msg = await self._latest_list(bot) or msg
+                    msg, gate = await self._state(bot)
                 except Exception as e:  # noqa: BLE001
                     log.info("Aggiorna non riuscito: %s", e)
+            self._set_gate(gate)
+            if gate is not None:
+                log.info("Il bot chiede di sbloccare la lista")
             if msg is None:
                 return []
-            links = []
-            for ent, txt in msg.get_entities_text():
-                if isinstance(ent, types.MessageEntityTextUrl):
-                    links.append((txt, ent.url))
-                elif isinstance(ent, types.MessageEntityUrl):
-                    links.append((txt, txt))
-            events = parse_message(msg.message, links, datetime.now(TZ).year)
-            for ev in events:
-                ev.update(await self._resolve(ev["url"]))
-                ev.pop("url_raw", None)
-            kinds = {}
-            for ev in events:
-                kinds[ev["kind"]] = kinds.get(ev["kind"], 0) + 1
-            log.info("Eventi dal bot: %d (%s)", len(events), kinds)
-            return events
+            return await self._events_from(msg)
 
+    async def _events_from(self, msg) -> list[dict]:
+        links = []
+        for ent, txt in msg.get_entities_text():
+            if isinstance(ent, types.MessageEntityTextUrl):
+                links.append((txt, ent.url))
+            elif isinstance(ent, types.MessageEntityUrl):
+                links.append((txt, txt))
+        events = parse_message(msg.message, links, datetime.now(TZ).year)
+        for ev in events:
+            ev.update(await self._resolve(ev["url"]))
+        kinds = {}
+        for ev in events:
+            kinds[ev["kind"]] = kinds.get(ev["kind"], 0) + 1
+        log.info("Eventi dal bot: %d (%s)", len(events), kinds)
+        return events
+
+    # ---------------------------------------------------------------- sblocco
+    def _gate_links(self, gate) -> tuple[list[str], list]:
+        urls, verify = [], []
+        for row in gate.buttons or []:
+            for b in row:
+                if b.url:
+                    urls.append(_norm_url(b.url))
+                elif b.data is not None and any(w in (b.text or "").lower() for w in VERIFY_WORDS):
+                    verify.append(b)
+        for ent, txt in gate.get_entities_text():
+            if isinstance(ent, types.MessageEntityTextUrl):
+                urls.append(_norm_url(ent.url))
+            elif isinstance(ent, types.MessageEntityUrl):
+                urls.append(_norm_url(txt))
+        seen, out = set(), []
+        for u in urls:
+            kind, key = link_kind(u)
+            if kind == "web" or u in seen or (key or "").lower() == self.bot.lower():
+                continue
+            seen.add(u)
+            out.append(u)
+        return out, verify
+
+    async def _complete(self, url: str, report: dict) -> None:
+        kind, key = link_kind(url)
+        label = key
+        for attempt in range(2):
+            try:
+                if kind == "invite":
+                    res = await self.client(functions.messages.CheckChatInviteRequest(key))
+                    label = getattr(getattr(res, "chat", None), "title", None) or getattr(res, "title", key)
+                    if isinstance(res, types.ChatInviteAlready):
+                        report["already"].append(label)
+                        return
+                    await self.client(functions.messages.ImportChatInviteRequest(key))
+                    report["joined"].append(label)
+                elif kind == "public":
+                    ent = await self.client.get_entity(key)
+                    if isinstance(ent, types.User) and ent.bot:
+                        m = re.search(r"[?&]start=([\w-]+)", url)
+                        await self.client(functions.messages.StartBotRequest(
+                            bot=ent, peer=ent, start_param=m.group(1) if m else "start"))
+                        report["bots"].append("@" + (ent.username or key))
+                    elif isinstance(ent, types.Channel):
+                        label = ent.title
+                        if not ent.left:
+                            report["already"].append(label)
+                            return
+                        await self.client(functions.channels.JoinChannelRequest(ent))
+                        report["joined"].append(label)
+                    else:
+                        report["skipped"].append(label)
+                else:
+                    report["failed"].append(f"{label} (link privato senza invito)")
+                return
+            except errors.UserAlreadyParticipantError:
+                report["already"].append(label)
+                return
+            except errors.InviteRequestSentError:
+                report["requested"].append(label)
+                return
+            except errors.FloodWaitError as e:
+                if attempt == 0 and e.seconds <= 30:
+                    await asyncio.sleep(e.seconds + 1)
+                    continue
+                report["failed"].append(f"{label} (Telegram chiede di aspettare {e.seconds}s)")
+                report["stop"] = True
+                return
+            except errors.ChannelsTooMuchError:
+                report["failed"].append(f"{label} (sei già in troppi canali)")
+                report["stop"] = True
+                return
+            except Exception as e:  # noqa: BLE001
+                report["failed"].append(f"{label} ({e})")
+                return
+
+    async def unlock(self) -> dict:
+        """Completa i requisiti del bot: entra nei canali richiesti, avvia i bot indicati, preme Sblocca."""
+        report = {"joined": [], "already": [], "requested": [], "bots": [], "skipped": [], "failed": [],
+                  "clicked": [], "ok": False, "message": ""}
+        async with self._lock:
+            bot = await self.client.get_input_entity(self.bot)
+            await self.client.send_message(bot, "/start")
+            await asyncio.sleep(3)
+            done_urls: set[str] = set()
+            for _round in range(3):
+                msg, gate = await self._state(bot)
+                if gate is None:
+                    report["ok"] = msg is not None
+                    break
+                urls, verify = self._gate_links(gate)
+                todo = [u for u in urls if u not in done_urls][:MAX_JOINS - len(done_urls)]
+                log.info("Sblocco: %d link da completare, %d bottoni di verifica", len(todo), len(verify))
+                for u in todo:
+                    done_urls.add(u)
+                    await self._complete(u, report)
+                    if report.get("stop"):
+                        break
+                    await asyncio.sleep(2)
+                if report.get("stop"):
+                    break
+                await asyncio.sleep(2)
+                if verify:
+                    for b in verify[:1]:
+                        try:
+                            ans = await b.click()
+                            report["clicked"].append(b.text)
+                            if ans is not None and getattr(ans, "message", None):
+                                report["message"] = ans.message
+                        except Exception as e:  # noqa: BLE001
+                            report["failed"].append(f"bottone «{b.text}» ({e})")
+                else:
+                    await self.client.send_message(bot, "/start")
+                await asyncio.sleep(3)
+            msg, gate = await self._state(bot)
+            self._set_gate(gate)
+            report["ok"] = gate is None and msg is not None
+        report.pop("stop", None)
+        self._resolved.clear()
+        log.info("Sblocco: %s", {k: (len(v) if isinstance(v, list) else v) for k, v in report.items()})
+        return report
+
+    # ---------------------------------------------------------------- link
     async def _resolve(self, url: str) -> dict:
         kind, key = link_kind(url)
         info = {"kind": kind, "peer_id": None, "member": False, "channel_title": None}
