@@ -127,8 +127,12 @@ async def live_status(peer_id) -> dict:
         return {"live": None}
     now = time.monotonic()
     cached = App.live_cache.get(peer_id)
-    if cached and now - cached[0] < LIVE_CACHE_S:
+    # Mentre una diretta è in riproduzione non disturbo Telegram con altre richieste di stato.
+    watching = any(s.running for s in App.streamers.values())
+    if cached and (now - cached[0] < LIVE_CACHE_S or watching):
         return cached[1]
+    if watching:
+        return {"live": None}
     try:
         info = await App.live.live_info(int(peer_id))
         res = {"live": False} if info is None else {

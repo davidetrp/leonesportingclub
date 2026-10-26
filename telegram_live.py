@@ -27,7 +27,7 @@ from chunks import CHUNK_MS, ChunkNotReady, NotLive, Resync, Unsupported  # noqa
 log = logging.getLogger("telegram_live")
 
 GETFILE_LIMIT = 1024 * 1024
-CHANNELS_MIN_GAP = 5.0
+CHANNELS_MIN_GAP = 8.0
 _channels_lock = asyncio.Lock()
 _last_channels_call = 0.0
 
@@ -202,13 +202,15 @@ class CallReader:
         return int((time.time() + offset) * 1000)
 
     async def start_ms(self, buffer_ms: int = 3000) -> int:
-        deadline = asyncio.get_running_loop().time() + 45
+        deadline = asyncio.get_running_loop().time() + 75
         while asyncio.get_running_loop().time() < deadline:
             try:
                 end = await self.stream_end_ms(max_wait=20)
             except errors.FloodWaitError as e:
-                log.info("Fine dello stream non disponibile (pausa %ss), riprovo", e.seconds)
-                await asyncio.sleep(max(3, e.seconds))
+                # Il limite reale sembra più lungo di quello dichiarato: aspetto parecchio di più.
+                pause = max(10, e.seconds * 3)
+                log.info("Fine dello stream non disponibile (Telegram dice %ss), riprovo tra %ss", e.seconds, pause)
+                await asyncio.sleep(pause)
                 continue
             log.info("Fine dello stream: %s", end)
             if end:
