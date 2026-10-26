@@ -59,37 +59,46 @@ Ti chiede numero di telefono, il codice che arriva su Telegram e l'eventuale pas
 
 Non aprire la porta del router su internet. Il modo più semplice e sicuro è **Tailscale** (gratis): installalo sul computer e sul telefono, poi apri `http://NOME-COMPUTER:8080` dal telefono ovunque tu sia.
 
-## Sito online privato (server VPS con HTTPS)
+## Sito online gratuito (Oracle Cloud + dominio gratuito)
 
-Per aprire l'app da qualsiasi rete con un indirizzo `https://…`, senza tenere acceso il tuo computer.
+Così l'app è sempre accesa, anche a Mac spento, con un indirizzo `https://…` da aprire ovunque.
 
-1. Prendi un VPS con **Ubuntu 24.04** (es. Hetzner CAX11 o CX22, pochi euro al mese) e annota il suo IP pubblico.
-2. Dal tuo computer copia il progetto sul server ed entra:
-   ```bash
-   scp canali-sport.zip root@IP-DEL-SERVER:
-   ssh root@IP-DEL-SERVER
-   ```
-3. Sul server:
-   ```bash
-   apt-get update && apt-get install -y unzip
-   unzip canali-sport.zip && cd canali-sport
-   bash install.sh
-   ```
-   Lo script installa Docker, ti chiede `api_id`, `api_hash`, la password del sito e il dominio, collega Telegram e avvia tutto.
-4. Apri dal telefono l'indirizzo che stampa alla fine.
+**1. Server gratuito.** Crea un account su [cloud.oracle.com](https://cloud.oracle.com) (piano «Always Free»: chiede una carta solo per verifica, non addebita). Poi *Compute → Instances → Create instance*:
+- Image: **Ubuntu 24.04** (o 22.04)
+- Shape: **Ampere VM.Standard.A1.Flex**, 1 OCPU e 6 GB di RAM (rientra nel gratuito). Se dice «Out of capacity», riprova più tardi o cambia «Availability domain».
+- SSH keys: «Generate a key pair» e **scarica la chiave privata** (file `.key`).
+- Dopo la creazione annota il **Public IP address**.
 
-**Dominio:** se non ne hai uno, premi Invio e lo script usa `IP-con-trattini.sslip.io` (es. `https://5-75-1-20.sslip.io`), che funziona subito con HTTPS. Se hai un dominio tuo, crea un record **A** (es. `tv.tuodominio.it`) che punta all'IP del server e scrivilo quando lo script lo chiede.
+**2. Apri le porte su Oracle.** Nella pagina dell'istanza: *Subnet → Security List → Add Ingress Rules*: Source CIDR `0.0.0.0/0`, protocollo TCP, porte **80,443**. (Il firewall interno del server lo apre lo script.)
 
-**Sicurezza:** il sito vuole la password (obbligatoria online), blocca un indirizzo dopo 5 tentativi sbagliati per 15 minuti, non è indicizzato dai motori di ricerca e l'app non è esposta direttamente: passa tutto da Caddy in HTTPS. La cartella `data/` sul server contiene la sessione del tuo account Telegram, quindi non darla a nessuno e usa una password del server robusta (o meglio una chiave SSH).
+**3. Dominio gratuito (facoltativo).** Su [duckdns.org](https://www.duckdns.org) entra con Google/GitHub, crea un nome (es. `leonesport`) e nel campo *current ip* metti l'IP del server → *update ip*. Indirizzo: `leonesport.duckdns.org`. Se salti questo passo, lo script usa `IP-con-trattini.sslip.io`, che funziona subito.
+
+**4. Installa.** Dal Mac:
+```bash
+chmod 600 ~/Downloads/ssh-key-*.key
+ssh -i ~/Downloads/ssh-key-*.key ubuntu@IP-DEL-SERVER
+```
+Sul server:
+```bash
+git clone https://github.com/davidetrp/leonesportingclub.git canali-sport
+cd canali-sport && sudo bash install.sh
+```
+Lo script installa tutto, chiede `api_id`, `api_hash`, la password del sito e il dominio, collega Telegram (numero + codice) e avvia. Si aggiorna da solo da GitHub ogni 5 minuti.
+
+**5. (Facoltativo) Porta i tuoi canali dal Mac**, da un terminale del Mac:
+```bash
+scp -i ~/Downloads/ssh-key-*.key ~/Downloads/canali-sport/data/canali.json ubuntu@IP-DEL-SERVER:canali-sport/data/
+```
 
 Comandi utili sul server, dentro `canali-sport`:
 
 | Cosa | Comando |
 |---|---|
-| Vedere i log | `docker compose logs -f canali-sport` |
-| Riavviare | `docker compose restart` |
-| Aggiornare dopo aver sostituito i file | `docker compose up -d --build` |
-| Spegnere | `docker compose down` |
+| Vedere i log | `sudo docker compose logs -f canali-sport` |
+| Riavviare | `sudo docker compose restart` |
+| Spegnere | `sudo docker compose down` |
+
+**Sicurezza:** il sito vuole la password, blocca un indirizzo dopo 5 tentativi sbagliati per 15 minuti e non è indicizzato. La cartella `data/` sul server contiene la sessione del tuo account Telegram: non condividerla.
 
 ## Cosa aspettarsi
 
