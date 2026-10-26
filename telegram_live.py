@@ -168,7 +168,9 @@ class CallReader:
                 "Questa diretta è una video chat normale (WebRTC), non uno stream: "
                 "può essere letta a chunk solo se trasmessa via RTMP o con molti spettatori."
             )
-        log.info("Entrato nella diretta %s (dc %s)", self.peer_id, info.dc_id)
+        log.info("Entrato nella diretta %s: rtmp=%s, dc stream=%s, dc account=%s, modalità=%s",
+                 self.peer_id, info.rtmp, info.dc_id, self.client.session.dc_id,
+                 {k: v for k, v in mode.items() if k in ("stream", "rtmp")})
 
     async def leave(self) -> None:
         if not self.info:
@@ -203,13 +205,12 @@ class CallReader:
         deadline = asyncio.get_running_loop().time() + 45
         while asyncio.get_running_loop().time() < deadline:
             try:
-                end = await self.stream_end_ms()
-            except errors.FloodWaitError:
-                # Telegram non ci dà la fine dello stream: parto dall'ora del server, come fanno i client
-                # ufficiali per le dirette in modalità stream.
-                start = (self.server_now_ms() // CHUNK_MS) * CHUNK_MS - buffer_ms - 2000
-                log.info("Punto di partenza dall'ora del server: %s", start)
-                return start
+                end = await self.stream_end_ms(max_wait=20)
+            except errors.FloodWaitError as e:
+                log.info("Fine dello stream non disponibile (pausa %ss), riprovo", e.seconds)
+                await asyncio.sleep(max(3, e.seconds))
+                continue
+            log.info("Fine dello stream: %s", end)
             if end:
                 start = (end // CHUNK_MS) * CHUNK_MS - buffer_ms
                 if start > 0:
@@ -232,6 +233,9 @@ class CallReader:
                 raise ChunkNotReady() from e
             except errors.RPCError as e:
                 msg = _rpc_message(e)
+                if msg != getattr(self, "_last_err", None):
+                    self._last_err = msg
+                    log.info("Chunk %s: errore %s %s %s", time_ms, type(e).__name__, getattr(e, "code", ""), msg)
                 if "TIME_TOO_BIG" in msg or "FLOOD" in msg:
                     raise ChunkNotReady() from e
                 if "GROUPCALL_JOIN_MISSING" in msg or "GROUPCALL_FORBIDDEN" in msg:

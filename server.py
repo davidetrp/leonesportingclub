@@ -34,7 +34,7 @@ STATIC = config.BASE_DIR / "static"
 HLS_ROOT = config.DATA_DIR / "hls"
 SLOTS_FILE = config.DATA_DIR / "canali.json"
 SECRET_FILE = config.DATA_DIR / "secret.key"
-LIVE_CACHE_S = 25
+LIVE_CACHE_S = 60
 
 
 class App:

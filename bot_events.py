@@ -267,25 +267,37 @@ class BotEvents:
         for attempt in range(2):
             try:
                 if kind == "invite":
-                    res = await self.client(functions.messages.CheckChatInviteRequest(key))
-                    label = getattr(getattr(res, "chat", None), "title", None) or getattr(res, "title", None) or label
-                    if isinstance(res, types.ChatInviteAlready):
-                        if not rejoin:
-                            report["already"].append(label)
-                            return
-                        await self.client(functions.channels.LeaveChannelRequest(res.chat))
-                        await asyncio.sleep(3)
-                        try:
-                            await self.client(functions.messages.ImportChatInviteRequest(key))
-                            report["rejoined"].append(label)
-                        except Exception as e:  # noqa: BLE001
-                            if "INVITE_REQUEST_SENT" in str(e) or isinstance(e, errors.InviteRequestSentError):
-                                report["requested"].append(label)
-                            else:
-                                report["failed"].append(f"{label} (uscito ma non rientrato: {e})")
+                    # Entro direttamente dal link del bot: CheckChatInvite a volte dice «già dentro» anche
+                    # quando non lo sei, quindi non mi fido e provo l'ingresso.
+                    try:
+                        upd = await self.client(functions.messages.ImportChatInviteRequest(key))
+                        chats = getattr(upd, "chats", None) or []
+                        report["joined"].append(getattr(chats[0], "title", label) if chats else label)
                         return
-                    await self.client(functions.messages.ImportChatInviteRequest(key))
-                    report["joined"].append(label)
+                    except Exception as e:  # noqa: BLE001
+                        text = str(e)
+                        if "INVITE_REQUEST_SENT" in text or isinstance(e, errors.InviteRequestSentError):
+                            report["requested"].append(label)
+                            return
+                        if not ("USER_ALREADY_PARTICIPANT" in text or isinstance(e, errors.UserAlreadyParticipantError)):
+                            raise
+                    # Sono davvero già dentro: il bot conta solo chi entra dal suo link, quindi esco e rientro.
+                    res = await self.client(functions.messages.CheckChatInviteRequest(key))
+                    chat = getattr(res, "chat", None)
+                    label = getattr(chat, "title", None) or label
+                    if not rejoin or chat is None:
+                        report["already"].append(label)
+                        return
+                    await self.client(functions.channels.LeaveChannelRequest(chat))
+                    await asyncio.sleep(3)
+                    try:
+                        await self.client(functions.messages.ImportChatInviteRequest(key))
+                        report["rejoined"].append(label)
+                    except Exception as e:  # noqa: BLE001
+                        if "INVITE_REQUEST_SENT" in str(e) or isinstance(e, errors.InviteRequestSentError):
+                            report["requested"].append(label)
+                        else:
+                            report["failed"].append(f"{label} (uscito ma non rientrato: {e})")
                 elif kind == "public":
                     ent = await self.client.get_entity(key)
                     if isinstance(ent, types.User) and ent.bot:
