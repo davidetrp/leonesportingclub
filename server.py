@@ -46,6 +46,7 @@ class App:
     events = None          # BotEvents
     events_cache: tuple[float, list] | None = None
     events_error = ""
+    unlock_task = None
 
 
 # --------------------------------------------------------------------------- persistence
@@ -334,23 +335,47 @@ async def events(request: Request):
 
 
 async def unlock_events(request: Request):
-    """Completa i requisiti del bot (entra nei canali richiesti e preme Sblocca). Parte solo da un tocco nell'app."""
+    """Avvia lo sblocco in sottofondo (POST) e ne restituisce l'avanzamento (GET). Parte solo da un tocco nell'app."""
     if not is_authed(request):
         return need_auth()
     if config.DEMO:
-        return JSONResponse({"ok": False, "joined": ["Canale 4 (demo)"], "already": [], "requested": ["Canale 6 (demo)"],
-                             "bots": [], "skipped": [], "failed": [], "clicked": ["🔒 SBLOCCA 🔒"], "message": "",
-                             "manual": [{"text": "🔴 APRI IL LINK 🔴", "url": "https://example.com"}],
-                             "buttons": ["CANALE 4 → invite", "CANALE 6 → invite", "APRI IL LINK → web"]})
+        return await _demo_unlock(request)
     if not App.events:
         return JSONResponse({"error": App.tg_error or "Telegram non collegato."}, status_code=503)
-    try:
-        report = await App.events.unlock()
-    except Exception as e:  # noqa: BLE001
-        log.exception("Sblocco non riuscito")
-        return JSONResponse({"error": f"Sblocco non riuscito: {e}"}, status_code=502)
-    App.events_cache = None
-    return JSONResponse(report)
+    ev = App.events
+    if request.method == "POST" and not ev.unlocking:
+        ev.unlocking = True
+        ev.steps = ["Avvio lo sblocco…"]
+        ev.last_report = None
+
+        async def run():
+            try:
+                await ev.unlock()
+            except Exception as e:  # noqa: BLE001
+                log.exception("Sblocco non riuscito")
+                ev.steps.append(f"Errore: {e}")
+                ev.unlocking = False
+            App.events_cache = None
+        App.unlock_task = asyncio.create_task(run())
+    return JSONResponse({"running": ev.unlocking, "steps": ev.steps, "report": None if ev.unlocking else ev.last_report})
+
+
+_demo_state = {"t0": 0.0}
+
+
+async def _demo_unlock(request: Request):
+    steps = ["Chiedo la lista al bot (/start)…", "Il bot chiede 2 passaggi.", "«CANALE 4»: entro dal link del bot…",
+             "«CANALE 4»: entrato.", "«APRI IL LINK» è una pagina web: va aperta da te.",
+             "Aspetto qualche secondo che il bot registri tutto…", "Premo «SBLOCCA»…", "La lista non risulta ancora sbloccata."]
+    if request.method == "POST":
+        _demo_state["t0"] = time.monotonic()
+    n = min(len(steps), int((time.monotonic() - _demo_state["t0"]) / 0.8) + 1)
+    running = n < len(steps)
+    report = None if running else {"ok": False, "joined": ["Canale 4 (demo)"], "rejoined": [], "already": [], "requested": [],
+                                   "bots": [], "skipped": [], "failed": [], "clicked": ["🔒 SBLOCCA 🔒"], "message": "",
+                                   "manual": [{"text": "🔴 APRI IL LINK 🔴", "url": "https://example.com"}],
+                                   "buttons": ["CANALE 4 → invite", "APRI IL LINK → pagina web (example.com)"]}
+    return JSONResponse({"running": running, "steps": steps[:n], "report": report})
 
 
 async def watch_event(request: Request):
@@ -465,7 +490,7 @@ routes = [
     Route("/api/matches", matches),
     Route("/api/events", events, methods=["GET", "POST"]),
     Route("/api/events/watch", watch_event, methods=["POST"]),
-    Route("/api/events/unlock", unlock_events, methods=["POST"]),
+    Route("/api/events/unlock", unlock_events, methods=["GET", "POST"]),
     Route("/hls/{cid:int}/{file}", hls),
     Mount("/static", StaticFiles(directory=STATIC), name="static"),
 ]

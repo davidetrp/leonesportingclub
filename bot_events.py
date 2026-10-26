@@ -125,6 +125,10 @@ class BotEvents:
         self.bot = bot_username.lstrip("@")
         self._resolved: dict[str, tuple[float, dict]] = {}
         self._lock = asyncio.Lock()
+        self._last_events: list[dict] = []
+        self.steps: list[str] = []          # avanzamento dello sblocco, mostrato nell'app
+        self.unlocking = False
+        self.last_report: dict | None = None
         self.locked = False
         self.gate_text = ""
 
@@ -160,7 +164,13 @@ class BotEvents:
         self.locked = gate is not None
         self.gate_text = (gate.message or "")[:300] if gate is not None else ""
 
+    def _step(self, text: str) -> None:
+        self.steps.append(text)
+        log.info("Sblocco: %s", text)
+
     async def fetch(self, refresh: bool = False) -> list[dict]:
+        if self._lock.locked():            # c'è uno sblocco in corso: non aspetto, uso l'ultima lista
+            return self._last_events
         async with self._lock:
             bot = await self.client.get_input_entity(self.bot)
             msg, gate = await self._state(bot)
@@ -180,8 +190,10 @@ class BotEvents:
             if gate is not None:
                 log.info("Il bot chiede di sbloccare la lista")
             if msg is None:
+                self._last_events = []
                 return []
-            return await self._events_from(msg)
+            self._last_events = await self._events_from(msg)
+            return self._last_events
 
     async def _events_from(self, msg) -> list[dict]:
         links = []
@@ -373,8 +385,18 @@ class BotEvents:
         avvia i bot indicati e preme Sblocca. Le pagine web le lascia da aprire all'utente."""
         report = {"joined": [], "rejoined": [], "already": [], "requested": [], "bots": [], "skipped": [],
                   "failed": [], "manual": [], "clicked": [], "ok": False, "message": "", "buttons": []}
+        self.steps = []
+        self.unlocking = True
+        try:
+            return await self._unlock(report)
+        finally:
+            self.unlocking = False
+            self.last_report = report
+
+    async def _unlock(self, report: dict) -> dict:
         async with self._lock:
             bot = await self.client.get_input_entity(self.bot)
+            self._step("Chiedo la lista al bot (/start)…")
             await self.client.send_message(bot, "/start")
             await asyncio.sleep(3)
             done_urls: set[str] = set()
@@ -382,8 +404,11 @@ class BotEvents:
             for _round in range(2):
                 msg, gate = await self._state(bot)
                 if gate is None:
+                    self._step("Il bot non chiede più niente.")
                     break
                 links, verify = self._gate_buttons(gate)
+                todo_n = sum(1 for l in links if not l["done"])
+                self._step(f"Il bot chiede {todo_n} passaggi." if todo_n else "Tutti i passaggi risultano già fatti.")
                 report["buttons"] = [f"{l['text']} → {self._describe(l)}" for l in links]
                 log.info("Sblocco: bottoni %s, verifica: %s", report["buttons"], [b.text for b in verify])
                 for l in links:
@@ -391,8 +416,10 @@ class BotEvents:
                         continue
                     done_urls.add(l["url"])
                     url, kind = l["url"], link_kind(l["url"])[0]
+                    name = re.sub(r"[🔴✅🔒]", "", l["text"]).strip()
                     if l["webapp"]:
                         report["manual"].append({"text": l["text"], "url": l["url"]})
+                        self._step(f"«{name}» va aperto da te.")
                         continue
                     if kind == "web" and not l["webapp"] and re.search(r"canal|grupp|channel|group", l["text"], re.I):
                         found = await self._follow(url)
@@ -401,26 +428,36 @@ class BotEvents:
                             url, kind = found, link_kind(found)[0]
                     if kind == "web":
                         report["manual"].append({"text": l["text"], "url": l["url"]})
+                        self._step(f"«{name}» è una pagina web: va aperta da te.")
                         continue
                     if joins >= MAX_JOINS:
                         report["failed"].append(f"{l['text']} (troppi canali in una volta, riprova tra poco)")
                         continue
                     joins += 1
+                    self._step(f"«{name}»: " + ("avvio il bot col codice…" if l.get("self_start") else "entro dal link del bot…"))
+                    before = {k: len(v) for k, v in report.items() if isinstance(v, list)}
                     await self._complete(url, report, l["text"], rejoin=True)
+                    for k, word in (("joined", "entrato"), ("rejoined", "rientrato"), ("requested", "richiesta inviata"),
+                                    ("bots", "bot avviato"), ("already", "già fatto"), ("failed", "non riuscito")):
+                        if len(report[k]) > before.get(k, 0):
+                            self._step(f"«{name}»: {word}." + (f" {report[k][-1]}" if k == "failed" else ""))
                     if report.get("stop"):
                         break
                     await asyncio.sleep(4)
                 if report.get("stop"):
                     break
+                self._step("Aspetto qualche secondo che il bot registri tutto…")
                 await asyncio.sleep(6)          # il bot ha bisogno di qualche secondo per vedere gli ingressi
                 if not verify:
                     break
                 b = verify[0]
+                self._step("Premo «SBLOCCA»…")
                 try:
                     ans = await b.click()
                     report["clicked"].append(b.text)
                     if ans is not None and getattr(ans, "message", None):
                         report["message"] = ans.message
+                        self._step(f"Il bot risponde: {ans.message}")
                 except Exception as e:  # noqa: BLE001
                     report["failed"].append(f"bottone «{b.text}» ({e})")
                 await asyncio.sleep(3)
@@ -429,6 +466,7 @@ class BotEvents:
             msg, gate = await self._state(bot)
             self._set_gate(gate)
             report["ok"] = gate is None and msg is not None
+            self._step("✅ Lista sbloccata." if report["ok"] else "La lista non risulta ancora sbloccata.")
         report.pop("stop", None)
         self._resolved.clear()
         log.info("Sblocco: %s", {k: v for k, v in report.items() if v and k != "buttons"})
