@@ -190,7 +190,32 @@ async def today_matches() -> dict:
         log.info("TheSportsDB non disponibile: %s", last)
         return None
 
-    results = await asyncio.gather(*(one(*lg) for lg in LEAGUES), sportsdb())
+    async def serie_c():
+        import seriec
+
+        def get_html(url):
+            req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA, "Accept-Language": "it-IT,it;q=0.9"})
+            with urllib.request.urlopen(req, timeout=12, context=SSL_CTX) as r:
+                return r.read().decode("utf-8", "replace")
+
+        out, ok = [], False
+        for g in seriec.GIRONI:
+            try:
+                html = await asyncio.to_thread(get_html, seriec.URL.format(g=g))
+                ok = True
+                found = seriec.parse(html, day, g)
+                out += found
+                if not found:
+                    nodes = seriec.text_nodes(html)
+                    i = next((k for k, n in enumerate(nodes) if "oggi" in n.lower() or " ore " in f" {n.lower()} "), None)
+                    log.info("Serie C girone %s: nessuna partita oggi. Testo vicino: %s", g.upper(),
+                             nodes[i:i + 12] if i is not None else nodes[:12])
+            except Exception as e:  # noqa: BLE001
+                log.info("Serie C girone %s non disponibile: %s", g.upper(), e)
+        log.info("Serie C da Virgilio: %d partite oggi", len(out))
+        return out if ok else None
+
+    results = await asyncio.gather(*(one(*lg) for lg in LEAGUES), serie_c(), sportsdb())
     if all(r is None for r in results) and cached:
         return cached[1]
     matches = [m for r in results if r for m in r]
