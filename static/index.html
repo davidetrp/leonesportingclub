@@ -489,18 +489,21 @@ footer { font-size: .82rem; color: var(--muted); }
   function fillForm() {
     editing = null; resetDelete(); note(""); nameTouched = false;
     var c = byId(currentId);
-    $("settingsTitle").textContent = c ? "Impostazioni · " + label(c) : "Impostazioni canale";
+    $("settingsTitle").textContent = c ? "Modifica · " + label(c) : "Impostazioni canale";
     $("nameInput").value = c ? c.name || "" : "";
-    $("delBtn").hidden = !c; $("cancelBtn").hidden = true; $("saveBtn").textContent = "Salva";
+    $("delBtn").hidden = !c; $("cancelBtn").hidden = true; $("saveBtn").textContent = "Salva modifiche";
     if ($("settings").open) loadTg(c ? c.peer_id : null);
   }
-  function openNew() {
-    editing = "new"; resetDelete(); note(""); nameTouched = false;
+  function openNew(keepNote) {
+    editing = "new"; resetDelete(); if (!keepNote) note(""); nameTouched = false;
     $("settingsTitle").textContent = "Nuovo canale";
-    $("nameInput").value = ""; $("delBtn").hidden = true; $("cancelBtn").hidden = false; $("saveBtn").textContent = "Aggiungi";
-    $("settings").open = true; loadTg(null);
-    $("settings").scrollIntoView({ behavior: "smooth", block: "center" });
-    setTimeout(function () { $("tgSelect").focus(); }, 300);
+    $("nameInput").value = ""; $("delBtn").hidden = true; $("cancelBtn").hidden = false; $("cancelBtn").textContent = "Chiudi"; $("saveBtn").textContent = "Aggiungi";
+    $("settings").open = true;
+    if (tgChannels) fillSelect(null); else loadTg(null);
+    if (!keepNote) {
+      $("settings").scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(function () { $("tgSelect").focus(); }, 300);
+    }
   }
   $("settings").addEventListener("toggle", function () {
     if (!$("settings").open) return;
@@ -520,10 +523,18 @@ footer { font-size: .82rem; color: var(--muted); }
     note("Salvo…");
     var req = editing === "new" ? api("/api/channels", { method: "POST", body: body })
                                 : api("/api/channels/" + currentId, { method: "PUT", body: body });
+    var adding = editing === "new";
     req.then(function (r) {
       if (!r.ok) { note(r.error || "Non salvato.", "bad"); return; }
-      var target = editing === "new" ? r.id : currentId;
-      refresh().then(function () { editing = null; tune(target); note("Salvato.", "good"); });
+      if (adding) {
+        // Resto in «Nuovo canale»: così il prossimo si aggiunge invece di sovrascrivere questo.
+        refresh().then(function () {
+          openNew(true);
+          note("Aggiunto «" + (body.name || "canale") + "». Scegline un altro oppure tocca Chiudi.", "good");
+        });
+        return;
+      }
+      refresh().then(function () { editing = null; tune(currentId); note("Modifiche salvate.", "good"); });
     }).catch(function () {});
   });
   $("delBtn").addEventListener("click", function () {
