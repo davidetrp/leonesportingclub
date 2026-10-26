@@ -39,7 +39,8 @@ LEAGUES = [
 ]
 
 # Seconda fonte gratuita (TheSportsDB) per le serie minori italiane che ESPN non copre bene.
-SPORTSDB_URL = "https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d={day}&s=Soccer"
+SPORTSDB_URL = "https://www.thesportsdb.com/api/v1/json/{key}/eventsday.php?d={day}&s=Soccer"
+SPORTSDB_KEYS = ("123", "3")       # chiave gratuita attuale, poi quella vecchia
 MINOR = [(re.compile(r"serie\s*c|lega\s*pro", re.I), "Serie C", 10),
          (re.compile(r"serie\s*b", re.I), "Serie B", 9)]
 
@@ -58,8 +59,12 @@ def _ssl_context() -> ssl.SSLContext:
 SSL_CTX = _ssl_context()
 
 
+BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+              "(KHTML, like Gecko) Version/17.0 Safari/605.1.15")
+
+
 def _get_json(url: str) -> dict:
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 CanaliSport"})
+    req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA, "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=10, context=SSL_CTX) as r:
         return json.loads(r.read().decode("utf-8"))
 
@@ -172,14 +177,18 @@ async def today_matches() -> dict:
             return None
 
     async def sportsdb():
-        try:
-            data = await asyncio.to_thread(_get_json, SPORTSDB_URL.format(day=day.isoformat()))
-            res = parse_sportsdb(data, day)
-            log.info("Serie minori da TheSportsDB: %d partite", len(res))
-            return res
-        except Exception as e:  # noqa: BLE001
-            log.info("TheSportsDB non disponibile: %s", e)
-            return None
+        last = None
+        for key in SPORTSDB_KEYS:
+            try:
+                data = await asyncio.to_thread(_get_json, SPORTSDB_URL.format(key=key, day=day.isoformat()))
+                res = parse_sportsdb(data, day)
+                log.info("Serie minori da TheSportsDB: %d partite (su %d del giorno)", len(res),
+                         len((data or {}).get("events") or []))
+                return res
+            except Exception as e:  # noqa: BLE001
+                last = e
+        log.info("TheSportsDB non disponibile: %s", last)
+        return None
 
     results = await asyncio.gather(*(one(*lg) for lg in LEAGUES), sportsdb())
     if all(r is None for r in results) and cached:
