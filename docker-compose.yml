@@ -1,0 +1,29 @@
+# Server online: Caddy (HTTPS automatico) davanti all'app.
+# L'app non è esposta direttamente su internet: passa tutto da Caddy sulle porte 80/443.
+services:
+  canali-sport:
+    build: .
+    env_file: .env
+    expose:
+      - "8080"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.8
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - canali-sport
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
