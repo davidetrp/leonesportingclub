@@ -56,7 +56,7 @@ h1 { font-family: var(--font-display); font-weight: 900; font-size: 2.3rem; lett
 .rail { min-width: 0; order: 2; }
 @media (min-width: 980px) {
   .layout { grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
-  .rail { order: 0; position: sticky; top: 20px; }
+  .rail { order: 0; position: sticky; top: 20px; max-height: calc(100vh - 40px); overflow-y: auto; }
 }
 
 /* Fixtures rail */
@@ -66,7 +66,7 @@ h1 { font-family: var(--font-display); font-weight: 900; font-size: 2.3rem; lett
 .rail-head .date { color: var(--muted); font-size: .85rem; }
 .rail-head .date::first-letter { text-transform: uppercase; }
 .fixtures { list-style: none; margin: 0; padding: 4px 0; max-height: none; }
-@media (min-width: 980px) { .fixtures { max-height: calc(100vh - 200px); overflow-y: auto; } }
+
 .fx { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
 .fx:last-child { border-bottom: 0; }
 .fx-time { font-family: var(--font-display); font-weight: 800; font-size: 1.15rem; font-variant-numeric: tabular-nums; line-height: 1.2; }
@@ -79,6 +79,18 @@ h1 { font-family: var(--font-display); font-weight: 900; font-size: 2.3rem; lett
 .fx-team b { font-variant-numeric: tabular-nums; }
 .fx.is-live { background: color-mix(in srgb, var(--live) 7%, transparent); }
 .rail-empty { padding: 16px; color: var(--muted); font-size: .9rem; margin: 0; }
+.rail { display: grid; gap: 16px; align-content: start; }
+.rail-head.with-btn { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.mini { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-size: .8rem; font-weight: 600; padding: 5px 10px; border-radius: 999px; cursor: pointer; }
+.mini:focus-visible, .watch:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.ev-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.ev-row:last-child { border-bottom: 0; }
+.ev-name { font-weight: 600; font-size: .93rem; overflow-wrap: anywhere; }
+.watch { appearance: none; border: 0; cursor: pointer; background: var(--accent); color: var(--accent-ink); font-family: var(--font-display); font-weight: 800; font-size: .9rem; letter-spacing: .06em; text-transform: uppercase; padding: 7px 10px; border-radius: 7px; white-space: nowrap; text-decoration: none; }
+.watch.join { background: transparent; color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.watch.armed { background: var(--live); color: #fff; box-shadow: none; }
+.ev-note { padding: 8px 16px 12px; font-size: .8rem; color: var(--muted); margin: 0; }
+.card .ev { font-size: .78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Monitor */
 .monitor { background: var(--screen); color: var(--screen-ink); border-radius: 14px; overflow: hidden; }
@@ -173,6 +185,12 @@ footer { font-size: .82rem; color: var(--muted); }
 
   <div class="layout" id="app" hidden>
     <aside class="rail" aria-labelledby="fxTitle">
+      <div class="rail-card" id="evCard" hidden>
+        <div class="rail-head with-btn"><div><h2>Eventi in programma</h2><span class="date" id="evBot"></span></div>
+          <button class="mini" id="evRefresh" type="button">Aggiorna</button></div>
+        <ul class="fixtures" id="events"></ul>
+        <p class="ev-note" id="evNote" hidden></p>
+      </div>
       <div class="rail-card">
         <div class="rail-head"><h2 id="fxTitle">Partite di oggi</h2><span class="date" id="fxDate"></span></div>
         <ul class="fixtures" id="fixtures"><li class="rail-empty">Carico le partite…</li></ul>
@@ -307,10 +325,11 @@ footer { font-size: .82rem; color: var(--muted); }
       card.className = "card"; card.id = "ch-" + c.id; card.tabIndex = 0; card.setAttribute("role", "button");
       card.setAttribute("aria-pressed", String(c.id === currentId));
       card.setAttribute("aria-label", (i + 1) + ". " + label(c) + (live ? ", in diretta, " + fmtViewers(c.viewers) + " spettatori" : ", non in diretta"));
-      card.innerHTML = '<span class="k"></span><span class="s"></span><span class="st"><span class="dot"></span><span class="t"></span></span>' +
+      card.innerHTML = '<span class="k"></span><span class="s"></span><span class="ev" hidden></span><span class="st"><span class="dot"></span><span class="t"></span></span>' +
         '<button class="star" type="button"></button>';
       card.querySelector(".k").textContent = i + 1;
       card.querySelector(".s").textContent = label(c);
+      if (c.event) { var evEl = card.querySelector(".ev"); evEl.hidden = false; evEl.textContent = "⚽ " + c.event.name + (c.event.time ? " · " + c.event.time : ""); }
       var st = card.querySelector(".st");
       if (live) { st.classList.add("live"); st.querySelector(".t").textContent = "Live · " + fmtViewers(c.viewers) + " 👁"; }
       else st.querySelector(".t").textContent = c.live === false ? "Offline" : "Stato non disponibile";
@@ -351,7 +370,8 @@ footer { font-size: .82rem; color: var(--muted); }
     $("bugCh").textContent = "CH " + pos;
     $("chanName").textContent = c ? label(c) : "Nessun canale";
     var src = "Aggiungi un canale con il tasto +";
-    if (c) src = c.live === true ? "In diretta" + (c.title ? " · " + c.title : "") + " · " + fmtViewers(c.viewers) + " spettatori"
+    if (c && c.event) src = "⚽ " + c.event.name + (c.event.time ? " · " + c.event.time : "") + (c.live === true ? " · " + fmtViewers(c.viewers) + " spettatori" : " · non ancora in diretta");
+    else if (c) src = c.live === true ? "In diretta" + (c.title ? " · " + c.title : "") + " · " + fmtViewers(c.viewers) + " spettatori"
       : c.live === false ? "Nessuna diretta in questo momento" : "Stato non disponibile";
     $("chanSrc").textContent = src;
   }
@@ -506,6 +526,68 @@ footer { font-size: .82rem; color: var(--muted); }
     }).catch(function () {});
   });
 
+  // ---------------------------------------------------------------- eventi dal bot
+  var armedJoin = null;
+  function evNote(t) { $("evNote").hidden = !t; $("evNote").textContent = t || ""; }
+  function renderEvents(r) {
+    var list = r.events || [];
+    $("evCard").hidden = !r.bot && !list.length;
+    $("evBot").textContent = r.bot ? "da @" + r.bot : "";
+    var ul = $("events"); ul.innerHTML = "";
+    if (r.error) evNote(r.error);
+    if (!list.length) {
+      var li = document.createElement("li"); li.className = "rail-empty";
+      li.textContent = r.error ? "Lista non disponibile." : "Nessun evento in programma nella lista del bot.";
+      ul.appendChild(li); return;
+    }
+    list.forEach(function (ev) {
+      var li = document.createElement("li"); li.className = "ev-row";
+      var t = document.createElement("div"); t.className = "fx-time"; t.textContent = ev.time || "—";
+      var body = document.createElement("div"); body.className = "fx-body";
+      var lg = document.createElement("span"); lg.className = "fx-league"; lg.textContent = ev.league || "";
+      var nm = document.createElement("span"); nm.className = "ev-name"; nm.textContent = ev.name;
+      body.appendChild(lg); body.appendChild(nm);
+      li.appendChild(t); li.appendChild(body);
+      if (ev.watchable) {
+        var b = document.createElement("button"); b.type = "button";
+        var needJoin = !ev.member && !ev.channel_id;
+        b.className = "watch" + (needJoin ? " join" : "");
+        b.textContent = ev.channel_id ? "Guarda" : needJoin ? "Unisciti" : "Aggiungi";
+        b.setAttribute("aria-label", b.textContent + ": " + ev.name);
+        b.addEventListener("click", function () { watchEvent(ev, b, needJoin); });
+        li.appendChild(b);
+      } else if (ev.url) {
+        var a = document.createElement("a"); a.className = "watch join"; a.href = ev.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Apri";
+        li.appendChild(a);
+      } else li.appendChild(document.createElement("span"));
+      ul.appendChild(li);
+    });
+  }
+  function watchEvent(ev, btn, needJoin) {
+    if (ev.channel_id) { tune(ev.channel_id); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    if (needJoin && armedJoin !== ev.index) {
+      armedJoin = ev.index; btn.classList.add("armed"); btn.textContent = "Conferma";
+      evNote("Tocca «Conferma» per entrare nel canale " + (ev.channel_title ? "«" + ev.channel_title + "» " : "") + "con il tuo account Telegram.");
+      return;
+    }
+    armedJoin = null; btn.disabled = true; btn.textContent = "…"; evNote("");
+    api("/api/events/watch", { method: "POST", body: { index: ev.index, join: needJoin } }).then(function (r) {
+      if (r.ok) {
+        return refresh().then(function () { loadEvents(); tune(r.id); window.scrollTo({ top: 0, behavior: "smooth" }); });
+      }
+      btn.disabled = false; btn.textContent = needJoin ? "Unisciti" : "Aggiungi";
+      evNote(r.error || (r.need_join ? "Prima devi entrare nel canale." : "Non riuscito."));
+      if (r._status === 409) loadEvents();
+    }).catch(function () {});
+  }
+  function loadEvents(refreshBot) {
+    return api("/api/events", refreshBot ? { method: "POST" } : {}).then(renderEvents).catch(function () {});
+  }
+  $("evRefresh").addEventListener("click", function () {
+    $("evRefresh").disabled = true; $("evRefresh").textContent = "…";
+    loadEvents(true).then(function () { $("evRefresh").disabled = false; $("evRefresh").textContent = "Aggiorna"; refresh().catch(function () {}); });
+  });
+
   // ---------------------------------------------------------------- fixtures
   function renderFixtures(r) {
     var ul = $("fixtures");
@@ -556,8 +638,9 @@ footer { font-size: .82rem; color: var(--muted); }
       if (currentId) tune(currentId);
       else { overlay("Nessun canale", "Tocca + per aggiungere il primo canale."); fillForm(); }
     }).catch(function () {});
-    loadFixtures();
+    loadFixtures(); loadEvents();
     setInterval(function () { refresh().catch(function () {}); }, 20000);
+    setInterval(function () { loadEvents(); }, 90000);
     setInterval(loadFixtures, 120000);
   }
   boot();

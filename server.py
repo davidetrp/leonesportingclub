@@ -22,6 +22,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 import config
+from bot_events import demo_events
 from matches import today_matches
 from streamer import DemoSource, SlotStreamer, TelegramSource
 
@@ -42,6 +43,9 @@ class App:
     tg_error = ""
     streamers: dict[int, SlotStreamer] = {}
     live_cache: dict[int, tuple[float, dict]] = {}
+    events = None          # BotEvents
+    events_cache: tuple[float, list] | None = None
+    events_error = ""
 
 
 # --------------------------------------------------------------------------- persistence
@@ -179,11 +183,19 @@ async def state(request: Request):
     if not is_authed(request):
         return need_auth()
     channels = load_channels()
-    statuses = await asyncio.gather(*(live_status(c["peer_id"]) for c in channels))
+    async def events_or_empty():
+        try:
+            return await asyncio.wait_for(get_events(), timeout=8)
+        except asyncio.TimeoutError:
+            return App.events_cache[1] if App.events_cache else []
+    statuses, evs = await asyncio.gather(
+        asyncio.gather(*(live_status(c["peer_id"]) for c in channels)), events_or_empty())
     out = []
     for c, st in zip(channels, statuses):
         stv = App.streamers.get(c["id"])
+        ev = next((e for e in evs if e.get("peer_id") is not None and e["peer_id"] == c["peer_id"]), None)
         out.append({**c, **st,
+                    "event": {"name": ev["name"], "time": ev.get("time"), "league": ev.get("league")} if ev else None,
                     "stream": stv.state if stv else "idle",
                     "message": stv.message if stv else ""})
     return JSONResponse({"demo": config.DEMO, "telegram_error": App.tg_error, "channels": out})
@@ -273,6 +285,80 @@ async def matches(request: Request):
     return JSONResponse(await today_matches(), headers={"Cache-Control": "no-cache"})
 
 
+EVENTS_CACHE_S = 90
+
+
+async def get_events(refresh: bool = False) -> list[dict]:
+    if config.DEMO:
+        return demo_events()
+    if not App.events:
+        return []
+    now = time.monotonic()
+    if not refresh and App.events_cache and now - App.events_cache[0] < EVENTS_CACHE_S:
+        return App.events_cache[1]
+    try:
+        evs = await App.events.fetch(refresh=refresh)
+        App.events_error = ""
+    except Exception as e:  # noqa: BLE001
+        log.warning("Eventi dal bot non letti: %s", e)
+        App.events_error = f"Non riesco a leggere @{config.EVENTS_BOT}: {e}"
+        return App.events_cache[1] if App.events_cache else []
+    App.events_cache = (now, evs)
+    return evs
+
+
+def public_event(ev: dict, i: int, channels: list[dict]) -> dict:
+    ch = next((c for c in channels if ev.get("peer_id") is not None and c["peer_id"] == ev["peer_id"]), None)
+    return {"index": i, "name": ev["name"], "league": ev.get("league"), "time": ev.get("time"),
+            "start": ev.get("start"), "kind": ev.get("kind"), "member": ev.get("member"),
+            "channel_title": ev.get("channel_title"), "channel_id": ch["id"] if ch else None,
+            "watchable": ev.get("kind") in ("invite", "private", "public") and (ev.get("peer_id") is not None or ev.get("kind") == "invite"),
+            "url": ev.get("url") if ev.get("kind") == "web" else None}
+
+
+async def events(request: Request):
+    if not is_authed(request):
+        return need_auth()
+    refresh = request.method == "POST"
+    evs = await get_events(refresh=refresh)
+    channels = load_channels()
+    return JSONResponse({"bot": config.EVENTS_BOT, "error": App.events_error,
+                         "events": [public_event(e, i, channels) for i, e in enumerate(evs)]})
+
+
+async def watch_event(request: Request):
+    """Collega la partita a un canale: se serve entra nel canale (solo con join=true) e lo aggiunge all'elenco."""
+    if not is_authed(request):
+        return need_auth()
+    body = await request.json()
+    evs = await get_events()
+    i = int(body.get("index", -1))
+    if not 0 <= i < len(evs):
+        return JSONResponse({"error": "La lista è cambiata: aggiornala e riprova."}, status_code=409)
+    ev = evs[i]
+    peer = ev.get("peer_id")
+    if not ev.get("member") and not config.DEMO:
+        if not body.get("join"):
+            return JSONResponse({"need_join": True, "channel_title": ev.get("channel_title")})
+        try:
+            peer = await App.events.join(ev["url"])
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse({"error": f"Non sono riuscito a entrare nel canale: {e}"}, status_code=502)
+        App.events_cache = None
+    if peer is None:
+        return JSONResponse({"error": "Questo link non porta a un canale Telegram."}, status_code=400)
+    channels = load_channels()
+    ch = next((c for c in channels if c["peer_id"] == peer), None)
+    if ch is None:
+        if len(channels) >= MAX_CHANNELS:
+            return JSONResponse({"error": f"Massimo {MAX_CHANNELS} canali."}, status_code=400)
+        cid = max((c["id"] for c in channels), default=0) + 1
+        ch = {"id": cid, "name": (ev.get("channel_title") or ev["name"])[:40], "peer_id": peer}
+        channels.append(ch)
+        save_channels(channels)
+    return JSONResponse({"ok": True, "id": ch["id"]})
+
+
 async def hls(request: Request):
     if not is_authed(request):
         return Response(status_code=401)
@@ -328,6 +414,9 @@ async def connect_telegram() -> None:
         return
     await client.get_dialogs()          # riempie la cache dei canali
     App.client, App.live = client, TelegramLive(client)
+    if config.EVENTS_BOT:
+        from bot_events import BotEvents
+        App.events = BotEvents(client, config.EVENTS_BOT)
     me = await client.get_me()
     log.info("Telegram collegato come %s", me.first_name)
 
@@ -347,6 +436,8 @@ routes = [
     Route("/api/play/{cid:int}", play, methods=["GET", "POST"]),
     Route("/api/stop/{cid:int}", stop, methods=["POST"]),
     Route("/api/matches", matches),
+    Route("/api/events", events, methods=["GET", "POST"]),
+    Route("/api/events/watch", watch_event, methods=["POST"]),
     Route("/hls/{cid:int}/{file}", hls),
     Mount("/static", StaticFiles(directory=STATIC), name="static"),
 ]
