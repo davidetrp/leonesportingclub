@@ -18,6 +18,7 @@ import asyncio
 import logging
 import re
 import time
+import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -81,6 +82,23 @@ def parse_message(text: str, links: list[tuple[str, str]], year: int) -> list[di
         league = _clean_league(line)
         current = None
     return events
+
+
+OLD_AFTER_H = 12
+
+
+def drop_old(events: list[dict], now: datetime | None = None) -> list[dict]:
+    """Toglie le partite iniziate più di 12 ore fa."""
+    now = now or datetime.now(TZ)
+    out = []
+    for ev in events:
+        try:
+            if ev.get("start") and (now - datetime.fromisoformat(ev["start"])).total_seconds() > OLD_AFTER_H * 3600:
+                continue
+        except ValueError:
+            pass
+        out.append(ev)
+    return out
 
 
 def link_kind(url: str) -> tuple[str, str | None]:
@@ -173,6 +191,7 @@ class BotEvents:
             elif isinstance(ent, types.MessageEntityUrl):
                 links.append((txt, txt))
         events = parse_message(msg.message, links, datetime.now(TZ).year)
+        events = drop_old(events)
         for ev in events:
             ev.update(await self._resolve(ev["url"]))
         kinds = {}
@@ -182,36 +201,72 @@ class BotEvents:
         return events
 
     # ---------------------------------------------------------------- sblocco
-    def _gate_links(self, gate) -> tuple[list[str], list]:
-        urls, verify = [], []
+    def _gate_buttons(self, gate) -> tuple[list[dict], list]:
+        """Bottoni-link del messaggio di sblocco (con stato verde/rosso) e bottoni «Sblocca»."""
+        links, verify = [], []
         for row in gate.buttons or []:
             for b in row:
-                if b.url:
-                    urls.append(_norm_url(b.url))
-                elif b.data is not None and any(w in (b.text or "").lower() for w in VERIFY_WORDS):
+                raw = getattr(b, "button", None)
+                url = b.url or getattr(raw, "url", None)
+                text = (b.text or "").strip()
+                if url:
+                    green = "✅" in text and "🔴" not in text
+                    links.append({"text": text, "url": _norm_url(url), "done": green,
+                                  "webapp": type(raw).__name__ in ("KeyboardButtonWebView", "KeyboardButtonSimpleWebView")})
+                elif b.data is not None and any(w in text.lower() for w in VERIFY_WORDS):
                     verify.append(b)
         for ent, txt in gate.get_entities_text():
             if isinstance(ent, types.MessageEntityTextUrl):
-                urls.append(_norm_url(ent.url))
-            elif isinstance(ent, types.MessageEntityUrl):
-                urls.append(_norm_url(txt))
+                links.append({"text": txt.strip(), "url": _norm_url(ent.url), "done": False, "webapp": False})
         seen, out = set(), []
-        for u in urls:
-            kind, key = link_kind(u)
-            if kind == "web" or u in seen or (key or "").lower() == self.bot.lower():
+        for l in links:
+            kind, key = link_kind(l["url"])
+            if l["url"] in seen or (key or "").lower() == self.bot.lower():
                 continue
-            seen.add(u)
-            out.append(u)
+            seen.add(l["url"])
+            out.append(l)
         return out, verify
 
-    async def _complete(self, url: str, report: dict) -> None:
+    async def _follow(self, url: str) -> str | None:
+        """Segue i reindirizzamenti di un link di canale finché arriva a un link Telegram (senza aprirlo)."""
+        from matches import SSL_CTX
+        tg = re.compile(r"(?:https?://)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s\"'<>]+|tg://[^\s\"'<>]+", re.I)
+
+        class Found(Exception):
+            pass
+
+        class Stop(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                if tg.match(newurl):
+                    raise Found(newurl)
+                return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+        def go():
+            opener = urllib.request.build_opener(Stop, urllib.request.HTTPSHandler(context=SSL_CTX))
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"})
+            try:
+                with opener.open(req, timeout=10) as r:
+                    if tg.match(r.geturl()):
+                        return r.geturl()
+                    body = r.read(300_000).decode("utf-8", "replace")
+                    m = tg.search(body)
+                    return m.group(0) if m else None
+            except Found as f:
+                return str(f)
+
+        try:
+            return await asyncio.to_thread(go)
+        except Exception as e:  # noqa: BLE001
+            log.info("Link non seguito: %s", e)
+            return None
+
+    async def _complete(self, url: str, report: dict, label: str) -> None:
         kind, key = link_kind(url)
-        label = key
         for attempt in range(2):
             try:
                 if kind == "invite":
                     res = await self.client(functions.messages.CheckChatInviteRequest(key))
-                    label = getattr(getattr(res, "chat", None), "title", None) or getattr(res, "title", key)
+                    label = getattr(getattr(res, "chat", None), "title", None) or getattr(res, "title", None) or label
                     if isinstance(res, types.ChatInviteAlready):
                         report["already"].append(label)
                         return
@@ -254,53 +309,76 @@ class BotEvents:
                 report["stop"] = True
                 return
             except Exception as e:  # noqa: BLE001
-                report["failed"].append(f"{label} ({e})")
+                msg = str(e)
+                if "INVITE_REQUEST_SENT" in msg:
+                    report["requested"].append(label)
+                elif "USER_ALREADY_PARTICIPANT" in msg:
+                    report["already"].append(label)
+                else:
+                    report["failed"].append(f"{label} ({msg})")
                 return
 
     async def unlock(self) -> dict:
-        """Completa i requisiti del bot: entra nei canali richiesti, avvia i bot indicati, preme Sblocca."""
+        """Completa i requisiti del bot: entra nei canali col pallino rosso (o ne chiede l'accesso),
+        avvia i bot indicati e preme Sblocca. Le pagine web le lascia da aprire all'utente."""
         report = {"joined": [], "already": [], "requested": [], "bots": [], "skipped": [], "failed": [],
-                  "clicked": [], "ok": False, "message": ""}
+                  "manual": [], "clicked": [], "ok": False, "message": "", "buttons": []}
         async with self._lock:
             bot = await self.client.get_input_entity(self.bot)
             await self.client.send_message(bot, "/start")
             await asyncio.sleep(3)
             done_urls: set[str] = set()
-            for _round in range(3):
+            joins = 0
+            for _round in range(2):
                 msg, gate = await self._state(bot)
                 if gate is None:
-                    report["ok"] = msg is not None
                     break
-                urls, verify = self._gate_links(gate)
-                todo = [u for u in urls if u not in done_urls][:MAX_JOINS - len(done_urls)]
-                log.info("Sblocco: %d link da completare, %d bottoni di verifica", len(todo), len(verify))
-                for u in todo:
-                    done_urls.add(u)
-                    await self._complete(u, report)
+                links, verify = self._gate_buttons(gate)
+                report["buttons"] = [f"{l['text']} → {'ok' if l['done'] else link_kind(l['url'])[0]}" for l in links]
+                log.info("Sblocco: bottoni %s, verifica: %s", report["buttons"], [b.text for b in verify])
+                for l in links:
+                    if l["url"] in done_urls or l["done"]:
+                        continue
+                    done_urls.add(l["url"])
+                    url, kind = l["url"], link_kind(l["url"])[0]
+                    if kind == "web" and not l["webapp"] and re.search(r"canal|grupp|channel|group", l["text"], re.I):
+                        found = await self._follow(url)
+                        log.info("Sblocco: «%s» porta a %s", l["text"], link_kind(found)[0] if found else "nessun link Telegram")
+                        if found:
+                            url, kind = found, link_kind(found)[0]
+                    if kind == "web":
+                        report["manual"].append({"text": l["text"], "url": l["url"]})
+                        continue
+                    if joins >= MAX_JOINS:
+                        report["failed"].append(f"{l['text']} (troppi canali in una volta, riprova tra poco)")
+                        continue
+                    joins += 1
+                    await self._complete(url, report, l["text"])
                     if report.get("stop"):
                         break
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(4)
                 if report.get("stop"):
                     break
                 await asyncio.sleep(2)
-                if verify:
-                    for b in verify[:1]:
-                        try:
-                            ans = await b.click()
-                            report["clicked"].append(b.text)
-                            if ans is not None and getattr(ans, "message", None):
-                                report["message"] = ans.message
-                        except Exception as e:  # noqa: BLE001
-                            report["failed"].append(f"bottone «{b.text}» ({e})")
-                else:
-                    await self.client.send_message(bot, "/start")
+                if not verify:
+                    break
+                b = verify[0]
+                try:
+                    ans = await b.click()
+                    report["clicked"].append(b.text)
+                    if ans is not None and getattr(ans, "message", None):
+                        report["message"] = ans.message
+                except Exception as e:  # noqa: BLE001
+                    report["failed"].append(f"bottone «{b.text}» ({e})")
                 await asyncio.sleep(3)
+                if report["manual"]:
+                    break          # serve un passaggio dell'utente: inutile riprovare subito
             msg, gate = await self._state(bot)
             self._set_gate(gate)
             report["ok"] = gate is None and msg is not None
         report.pop("stop", None)
         self._resolved.clear()
-        log.info("Sblocco: %s", {k: (len(v) if isinstance(v, list) else v) for k, v in report.items()})
+        log.info("Sblocco: %s", {k: v for k, v in report.items() if v and k != "buttons"})
         return report
 
     # ---------------------------------------------------------------- link

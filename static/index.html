@@ -93,6 +93,9 @@ h1 { font-family: var(--font-display); font-weight: 900; font-size: 2.3rem; lett
 .gate { display: grid; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--warn) 9%, transparent); }
 .gate-text { margin: 0; font-size: .88rem; }
 .gate .watch { justify-self: start; }
+.manual { display: grid; gap: 8px; }
+.manual p { margin: 0; font-size: .82rem; color: var(--muted); }
+.manual a { justify-self: start; }
 .card .ev { font-size: .78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Monitor */
@@ -193,6 +196,7 @@ footer { font-size: .82rem; color: var(--muted); }
           <button class="mini" id="evRefresh" type="button">Aggiorna</button></div>
         <div class="gate" id="gate" hidden>
           <p class="gate-text">Il bot chiede di sbloccare la lista: di solito succede quando esci da uno dei canali richiesti.</p>
+          <div class="manual" id="manual" hidden></div>
           <button class="watch" id="unlockBtn" type="button">Sblocca</button>
         </div>
         <ul class="fixtures" id="events"></ul>
@@ -602,13 +606,24 @@ footer { font-size: .82rem; color: var(--muted); }
     api("/api/events/unlock", { method: "POST" }).then(function (r) {
       btn.disabled = false; btn.textContent = "Sblocca";
       if (r.error) { evNote(r.error); return; }
-      var parts = [r.ok ? "✅ Lista sbloccata." : "La lista non risulta ancora sbloccata.",
+      renderManual(r.manual || []);
+      var parts = [r.ok ? "✅ Lista sbloccata." : (r.manual && r.manual.length ? "Manca un passaggio da fare tu: apri il link qui sopra, poi tocca di nuovo Sblocca." : "La lista non risulta ancora sbloccata."),
         joinList("Entrato in", r.joined), joinList("Già dentro", r.already), joinList("Richiesta inviata (attende approvazione)", r.requested),
-        joinList("Bot avviati", r.bots), joinList("Non riusciti", r.failed), r.message ? "Il bot dice: " + r.message : ""];
+        joinList("Bot avviati", r.bots), joinList("Non riusciti", r.failed), r.message ? "Il bot dice: " + r.message : "",
+        !r.ok && r.buttons && r.buttons.length ? "Bottoni del bot: " + r.buttons.join(" | ") : ""];
       evNote(parts.filter(Boolean).join(" · "));
       loadEvents().then(function () { refresh().catch(function () {}); });
     }).catch(function () { btn.disabled = false; btn.textContent = "Sblocca"; });
   });
+  function renderManual(list) {
+    var box = $("manual"); box.innerHTML = ""; box.hidden = !list.length;
+    if (!list.length) return;
+    var p = document.createElement("p"); p.textContent = "Questi passaggi li devi fare tu (si aprono in una nuova scheda):"; box.appendChild(p);
+    list.forEach(function (m) {
+      var a = document.createElement("a"); a.className = "watch join"; a.href = m.url; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = (m.text || "Apri il link").replace(/[🔴✅🔒]/g, "").trim() || "Apri il link"; box.appendChild(a);
+    });
+  }
   function loadEvents(refreshBot) {
     return api("/api/events", refreshBot ? { method: "POST" } : {}).then(renderEvents).catch(function () {});
   }

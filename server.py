@@ -333,8 +333,10 @@ async def unlock_events(request: Request):
     if not is_authed(request):
         return need_auth()
     if config.DEMO:
-        return JSONResponse({"ok": True, "joined": ["Canale richiesto (demo)"], "already": [], "requested": [],
-                             "bots": [], "skipped": [], "failed": [], "clicked": ["✅ Sblocca"], "message": ""})
+        return JSONResponse({"ok": False, "joined": ["Canale 4 (demo)"], "already": [], "requested": ["Canale 6 (demo)"],
+                             "bots": [], "skipped": [], "failed": [], "clicked": ["🔒 SBLOCCA 🔒"], "message": "",
+                             "manual": [{"text": "🔴 APRI IL LINK 🔴", "url": "https://example.com"}],
+                             "buttons": ["CANALE 4 → invite", "CANALE 6 → invite", "APRI IL LINK → web"]})
     if not App.events:
         return JSONResponse({"error": App.tg_error or "Telegram non collegato."}, status_code=503)
     try:
