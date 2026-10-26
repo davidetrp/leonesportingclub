@@ -172,9 +172,11 @@ class TelegramSource:
 class DemoSource:
     """Genera un finto canale (barre colorate + tono) per provare l'app senza Telegram."""
 
-    def __init__(self, slot: int, tmp: Path):
+    def __init__(self, slot: int, tmp: Path, name: str = ""):
         self.slot = slot
         self.tmp = tmp
+        safe = "".join(ch for ch in name.upper() if ch.isalnum() or ch == " ")[:20].strip()
+        self.label = safe or f"CANALE {slot}"
         self.next_at = 0.0
         self.jumped = False
         self.drawtext = True
@@ -187,7 +189,7 @@ class DemoSource:
         hue = (self.slot * 67) % 360
         vf = f"hue=h={hue}"
         if self.drawtext:
-            vf += (f",drawtext=text='DEMO CANALE {self.slot}   %{{localtime\\:%X}}':"
+            vf += (f",drawtext=text='DEMO {self.label}   %{{localtime\\:%X}}':"
                    "fontcolor=white:fontsize=56:box=1:boxcolor=black@0.55:boxborderw=18:x=40:y=40")
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                "-f", "lavfi", "-i", "testsrc2=size=960x540:rate=25",

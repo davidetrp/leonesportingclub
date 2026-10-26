@@ -1,6 +1,6 @@
 # Canali Sport
 
-App con 5 canali (telecomando 1–5) che mostra **dentro l'app** le dirette dei tuoi canali Telegram privati, senza aprire Telegram.
+App con tutti i canali che vuoi (ordinati per spettatori, con preferiti e partite del giorno) che mostra **dentro l'app** le dirette dei tuoi canali Telegram privati, senza aprire Telegram.
 
 Come funziona: un piccolo server, collegato al tuo account Telegram, entra nella diretta come spettatore muto, scarica il flusso a pezzi da 1 secondo e lo trasforma in uno stream video (HLS) che il telefono riproduce. Il server è protetto da password ed è pensato per uso personale.
 
@@ -52,7 +52,7 @@ Ti chiede numero di telefono, il codice che arriva su Telegram e l'eventuale pas
 
 - Stessa Wi-Fi: `http://IP-DEL-COMPUTER:8080` (l'IP lo trovi con `ipconfig` su Windows o `ifconfig`/`ip a` su Mac/Linux).
 - Inserisci la password di `.env`.
-- Apri **Impostazioni canale**, scegli il canale Telegram dall'elenco, dai un nome e salva. Ripeti per i canali 1–5.
+- Tocca **+ Aggiungi canale**, scegli il canale Telegram dall'elenco, dai un nome e salva. Aggiungine quanti ne vuoi.
 - Per averla come app: in Safari *Condividi → Aggiungi alla schermata Home*, in Chrome *⋮ → Installa app*.
 
 ### Fuori casa

@@ -22,17 +22,18 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 import config
+from matches import today_matches
 from streamer import DemoSource, SlotStreamer, TelegramSource
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("server")
 
-SLOTS = 5
+MAX_CHANNELS = 60
 STATIC = config.BASE_DIR / "static"
 HLS_ROOT = config.DATA_DIR / "hls"
 SLOTS_FILE = config.DATA_DIR / "canali.json"
 SECRET_FILE = config.DATA_DIR / "secret.key"
-LIVE_CACHE_S = 20
+LIVE_CACHE_S = 25
 
 
 class App:
@@ -45,23 +46,35 @@ class App:
 
 # --------------------------------------------------------------------------- persistence
 
-def load_slots() -> list[dict]:
-    slots = [{"name": "", "peer_id": None} for _ in range(SLOTS)]
-    if config.DEMO:
-        slots = [{"name": f"Demo {i + 1}", "peer_id": -(i + 1)} for i in range(SLOTS)]
+def load_channels() -> list[dict]:
+    """Elenco dei canali: [{"id": 1, "name": "...", "peer_id": -100...}]."""
     try:
         saved = json.loads(SLOTS_FILE.read_text())
-        for i, s in enumerate(saved[:SLOTS]):
-            slots[i] = {"name": str(s.get("name") or ""), "peer_id": s.get("peer_id")}
     except (OSError, ValueError):
-        pass
-    return slots
+        saved = None
+    if saved is None:
+        if config.DEMO:
+            return [{"id": i, "name": n, "peer_id": -i} for i, n in
+                    enumerate(["Serie A", "Champions", "Premier", "LaLiga", "Bundesliga", "Sport Mix"], start=1)]
+        return []
+    channels = []
+    for i, c in enumerate(saved, start=1):
+        if "id" not in c:                      # vecchio formato a 5 tasti fissi
+            if c.get("peer_id") is None and not c.get("name"):
+                continue
+            c = {**c, "id": i}
+        channels.append({"id": int(c["id"]), "name": str(c.get("name") or ""), "peer_id": c.get("peer_id")})
+    return channels
 
 
-def save_slots(slots: list[dict]) -> None:
+def save_channels(channels: list[dict]) -> None:
     tmp = SLOTS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(slots, ensure_ascii=False, indent=2))
+    tmp.write_text(json.dumps(channels, ensure_ascii=False, indent=2))
     tmp.replace(SLOTS_FILE)
+
+
+def find_channel(cid: int) -> dict | None:
+    return next((c for c in load_channels() if c["id"] == cid), None)
 
 
 def auth_token() -> str:
@@ -83,24 +96,28 @@ def need_auth():
 
 # --------------------------------------------------------------------------- telegram
 
-def make_source(slot: int, tmp: Path):
+def make_source(cid: int, tmp: Path):
+    ch = find_channel(cid)
     if config.DEMO:
-        return DemoSource(slot, tmp)
-    peer_id = load_slots()[slot - 1]["peer_id"]
-    return TelegramSource(App.live.reader(int(peer_id), config.STREAM_QUALITY))
+        return DemoSource(cid, tmp, (ch or {}).get("name") or f"Canale {cid}")
+    return TelegramSource(App.live.reader(int(ch["peer_id"]), config.STREAM_QUALITY))
 
 
-def streamer(slot: int) -> SlotStreamer:
-    if slot not in App.streamers:
-        App.streamers[slot] = SlotStreamer(slot, HLS_ROOT, make_source)
-    return App.streamers[slot]
+def streamer(cid: int) -> SlotStreamer:
+    if cid not in App.streamers:
+        App.streamers[cid] = SlotStreamer(cid, HLS_ROOT, make_source)
+    return App.streamers[cid]
 
 
 async def live_status(peer_id) -> dict:
     if peer_id is None:
         return {"live": None}
     if config.DEMO:
-        return {"live": True, "rtmp": True, "title": "Segnale di prova", "viewers": 1}
+        # Spettatori finti che cambiano piano piano, per vedere l'ordinamento.
+        import math
+        n = abs(int(peer_id))
+        viewers = int(400 / n + 60 * (1 + math.sin(time.time() / 90 + n)))
+        return {"live": n != 5, "rtmp": True, "title": "Segnale di prova", "viewers": viewers if n != 5 else 0}
     if not App.live:
         return {"live": None}
     now = time.monotonic()
@@ -161,15 +178,15 @@ async def login(request: Request):
 async def state(request: Request):
     if not is_authed(request):
         return need_auth()
-    slots = load_slots()
-    statuses = await asyncio.gather(*(live_status(s["peer_id"]) for s in slots))
+    channels = load_channels()
+    statuses = await asyncio.gather(*(live_status(c["peer_id"]) for c in channels))
     out = []
-    for i, (s, st) in enumerate(zip(slots, statuses), start=1):
-        stv = App.streamers.get(i)
-        out.append({"slot": i, **s, **st,
+    for c, st in zip(channels, statuses):
+        stv = App.streamers.get(c["id"])
+        out.append({**c, **st,
                     "stream": stv.state if stv else "idle",
                     "message": stv.message if stv else ""})
-    return JSONResponse({"demo": config.DEMO, "telegram_error": App.tg_error, "slots": out})
+    return JSONResponse({"demo": config.DEMO, "telegram_error": App.tg_error, "channels": out})
 
 
 async def telegram_channels(request: Request):
@@ -177,39 +194,65 @@ async def telegram_channels(request: Request):
         return need_auth()
     if config.DEMO:
         return JSONResponse({"channels": [{"peer_id": -(i + 1), "title": f"Demo {i + 1}", "kind": "demo"}
-                                          for i in range(SLOTS)]})
+                                          for i in range(8)]})
     if not App.live:
         return JSONResponse({"error": App.tg_error or "Telegram non collegato."}, status_code=503)
     return JSONResponse({"channels": await App.live.list_channels()})
 
 
-async def update_slot(request: Request):
+def _clean(body: dict) -> tuple[str, int | None]:
+    peer = body.get("peer_id")
+    return str(body.get("name") or "").strip()[:40], int(peer) if peer not in (None, "") else None
+
+
+async def add_channel(request: Request):
     if not is_authed(request):
         return need_auth()
-    n = int(request.path_params["n"])
-    if not 1 <= n <= SLOTS:
+    name, peer = _clean(await request.json())
+    if peer is None:
+        return JSONResponse({"error": "Scegli un canale Telegram."}, status_code=400)
+    channels = load_channels()
+    if len(channels) >= MAX_CHANNELS:
+        return JSONResponse({"error": f"Massimo {MAX_CHANNELS} canali."}, status_code=400)
+    cid = max((c["id"] for c in channels), default=0) + 1
+    channels.append({"id": cid, "name": name, "peer_id": peer})
+    save_channels(channels)
+    return JSONResponse({"ok": True, "id": cid})
+
+
+async def edit_channel(request: Request):
+    if not is_authed(request):
+        return need_auth()
+    cid = int(request.path_params["cid"])
+    channels = load_channels()
+    ch = next((c for c in channels if c["id"] == cid), None)
+    if ch is None:
         return JSONResponse({"error": "Canale inesistente."}, status_code=404)
-    body = await request.json()
-    slots = load_slots()
-    peer = body.get("peer_id")
-    slots[n - 1] = {"name": str(body.get("name") or "")[:40], "peer_id": int(peer) if peer not in (None, "") else None}
-    save_slots(slots)
-    if n in App.streamers:
-        await App.streamers[n].stop()
+    if request.method == "DELETE":
+        channels = [c for c in channels if c["id"] != cid]
+    else:
+        name, peer = _clean(await request.json())
+        if peer is None:
+            return JSONResponse({"error": "Scegli un canale Telegram."}, status_code=400)
+        ch.update(name=name, peer_id=peer)
+    save_channels(channels)
+    if cid in App.streamers:
+        await App.streamers.pop(cid).stop()
     return JSONResponse({"ok": True})
 
 
 async def play(request: Request):
     if not is_authed(request):
         return need_auth()
-    n = int(request.path_params["n"])
-    if not 1 <= n <= SLOTS or load_slots()[n - 1]["peer_id"] is None:
+    cid = int(request.path_params["cid"])
+    ch = find_channel(cid)
+    if ch is None or ch["peer_id"] is None:
         return JSONResponse({"stream": "idle", "message": "Canale non collegato."}, status_code=404)
     if not config.DEMO and not App.live:
         return JSONResponse({"stream": "error", "message": App.tg_error}, status_code=503)
-    s = streamer(n)
+    s = streamer(cid)
     if request.method == "POST" and s.state in ("idle", "offline", "error", "unsupported"):
-        App.live_cache.pop(load_slots()[n - 1]["peer_id"], None)
+        App.live_cache.pop(ch["peer_id"], None)
         s.start()
     s.touch()
     return JSONResponse({"stream": s.state, "message": s.message})
@@ -218,20 +261,26 @@ async def play(request: Request):
 async def stop(request: Request):
     if not is_authed(request):
         return need_auth()
-    n = int(request.path_params["n"])
-    if n in App.streamers:
-        await App.streamers[n].stop()
+    cid = int(request.path_params["cid"])
+    if cid in App.streamers:
+        await App.streamers[cid].stop()
     return JSONResponse({"ok": True})
+
+
+async def matches(request: Request):
+    if not is_authed(request):
+        return need_auth()
+    return JSONResponse(await today_matches(), headers={"Cache-Control": "no-cache"})
 
 
 async def hls(request: Request):
     if not is_authed(request):
         return Response(status_code=401)
-    n = int(request.path_params["n"])
+    cid = int(request.path_params["cid"])
     name = request.path_params["file"]
-    if n not in App.streamers or "/" in name or ".." in name:
+    if cid not in App.streamers or "/" in name or ".." in name:
         return Response(status_code=404)
-    s = App.streamers[n]
+    s = App.streamers[cid]
     s.touch()
     path = s.dir / name
     if not path.exists():
@@ -293,10 +342,12 @@ routes = [
     Route("/api/login", login, methods=["POST"]),
     Route("/api/state", state),
     Route("/api/telegram-channels", telegram_channels),
-    Route("/api/slots/{n:int}", update_slot, methods=["PUT"]),
-    Route("/api/play/{n:int}", play, methods=["GET", "POST"]),
-    Route("/api/stop/{n:int}", stop, methods=["POST"]),
-    Route("/hls/{n:int}/{file}", hls),
+    Route("/api/channels", add_channel, methods=["POST"]),
+    Route("/api/channels/{cid:int}", edit_channel, methods=["PUT", "DELETE"]),
+    Route("/api/play/{cid:int}", play, methods=["GET", "POST"]),
+    Route("/api/stop/{cid:int}", stop, methods=["POST"]),
+    Route("/api/matches", matches),
+    Route("/hls/{cid:int}/{file}", hls),
     Mount("/static", StaticFiles(directory=STATIC), name="static"),
 ]
 
