@@ -165,11 +165,18 @@ class TelegramSource:
                     if end != -1:
                         waited = 0.0
             except Resync as e:
-                log.info("Risincronizzo: %s", e)
+                self.resyncs = getattr(self, "resyncs", 0) + 1
+                log.info("Risincronizzo (%d): %s", self.resyncs, e)
+                if self.resyncs > 8:
+                    raise RuntimeError(f"Telegram non dà i pezzi della diretta ({e})")
+                await asyncio.sleep(1)
                 self.time_ms = await self.reader.start_ms()
                 self.jumped = True
         self.time_ms += CHUNK_MS
         self.count += 1
+        self.resyncs = 0
+        if self.count == 1:
+            log.info("Primo pezzo della diretta ricevuto (%d byte)", len(data))
         return parse_chunk(data) if data else None
 
     async def close(self) -> None:

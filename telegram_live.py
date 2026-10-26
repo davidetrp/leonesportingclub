@@ -28,7 +28,7 @@ from chunks import CHUNK_MS, ChunkNotReady, NotLive, Resync, Unsupported  # noqa
 
 log = logging.getLogger("telegram_live")
 
-GETFILE_LIMIT = 1024 * 1024
+GETFILE_LIMIT = 128 * 1024      # come Telegram Desktop per i pezzi delle dirette
 CHANNELS_MIN_GAP = 8.0
 _channels_lock = asyncio.Lock()
 _last_channels_call = 0.0
@@ -240,23 +240,17 @@ class CallReader:
         return int((time.time() + offset) * 1000)
 
     async def start_ms(self, buffer_ms: int = 3000) -> int:
-        deadline = asyncio.get_running_loop().time() + 75
-        while asyncio.get_running_loop().time() < deadline:
-            try:
-                end = await self.stream_end_ms(max_wait=20)
-            except errors.FloodWaitError as e:
-                # Il limite reale sembra più lungo di quello dichiarato: aspetto parecchio di più.
-                pause = max(10, e.seconds * 3)
-                log.info("Fine dello stream non disponibile (Telegram dice %ss), riprovo tra %ss", e.seconds, pause)
-                await asyncio.sleep(pause)
-                continue
+        """Punto di partenza della diretta. Come Telegram Desktop: se Telegram non dice dove finisce lo
+        stream (FLOOD_WAIT o lista vuota), si parte dall'ora attuale del server in millisecondi."""
+        try:
+            end = await self.stream_end_ms(max_wait=0)
             log.info("Fine dello stream: %s", end)
-            if end:
-                start = (end // CHUNK_MS) * CHUNK_MS - buffer_ms
-                if start > 0:
-                    return start
-            await asyncio.sleep(3)
-        raise NotLive()
+        except errors.FloodWaitError as e:
+            log.info("Fine dello stream non disponibile (Telegram dice %ss): parto dall'ora del server", e.seconds)
+            end = None
+        if not end:
+            end = self.server_now_ms()
+        return (end // CHUNK_MS) * CHUNK_MS - buffer_ms
 
     async def fetch(self, time_ms: int) -> bytes:
         location = types.InputGroupCallStream(
