@@ -131,10 +131,19 @@ class TelegramSource:
         self.time_ms = 0
         self.count = 0
         self.jumped = False
+        self.on_status = None
+
+    def _status(self, text: str) -> None:
+        if self.on_status:
+            self.on_status(text)
 
     async def open(self) -> None:
+        self._status("Entro nella diretta…")
         await self.reader.join()
+        self.reader.status_cb = self._status
+        self._status("Cerco il punto di partenza…")
         self.time_ms = await self.reader.start_ms()
+        self._status("Scarico il primo pezzo di video…")
 
     async def next(self):
         self.jumped = False
@@ -152,7 +161,9 @@ class TelegramSource:
             try:
                 data = await self.reader.fetch(self.time_ms)
                 break
-            except ChunkNotReady:
+            except ChunkNotReady as e:
+                if not self.count:
+                    self._status(f"Aspetto il primo pezzo di video… (Telegram: {e or 'non pronto'}, {int(waited)} s)")
                 await asyncio.sleep(0.1)
                 waited += 0.1
                 if waited > 20:
@@ -167,6 +178,7 @@ class TelegramSource:
             except Resync as e:
                 self.resyncs = getattr(self, "resyncs", 0) + 1
                 log.info("Risincronizzo (%d): %s", self.resyncs, e)
+                self._status(f"Riprovo a sincronizzarmi… (Telegram: {e})")
                 if self.resyncs > 8:
                     raise RuntimeError(f"Telegram non dà i pezzi della diretta ({e})")
                 await asyncio.sleep(1)
@@ -274,6 +286,11 @@ class SlotStreamer:
         source = None
         try:
             source = self.make_source(self.slot, tmp)
+            if hasattr(source, "on_status"):
+                def on_status(text):
+                    if self.state == "starting":
+                        self.message = text
+                source.on_status = on_status
             await source.open()
             failures = 0
             while True:

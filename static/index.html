@@ -430,7 +430,7 @@ footer { font-size: .82rem; color: var(--muted); }
     if (token !== tuneToken) return;
     var st = r.stream, c = byId(id);
     if (st === "live") { startPlayer(id); return; }
-    if (st === "starting") { overlay("Mi collego alla diretta…", label(c), true); return; }
+    if (st === "starting") { overlay("Mi collego alla diretta…", (r.message && r.message !== "Mi collego alla diretta…") ? r.message : label(c), true); return; }
     clearInterval(statusTimer); statusTimer = null; stopPlayer();
     if (st === "offline") overlay("Nessuna diretta ora", "Su " + label(c) + " non sta trasmettendo nessuno. Riprova quando parte la partita.");
     else if (st === "unsupported") overlay("Diretta non leggibile", r.message);

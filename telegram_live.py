@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import secrets
 import time
 from dataclasses import dataclass
@@ -248,11 +249,94 @@ class CallReader:
         except errors.FloodWaitError as e:
             log.info("Fine dello stream non disponibile (Telegram dice %ss): parto dall'ora del server", e.seconds)
             end = None
-        if not end:
-            end = self.server_now_ms()
-        return (end // CHUNK_MS) * CHUNK_MS - buffer_ms
+        if end:
+            return (end // CHUNK_MS) * CHUNK_MS - buffer_ms
+        edge = await self.find_live_edge(self.server_now_ms() - buffer_ms, getattr(self, "status_cb", None))
+        return edge - 2 * CHUNK_MS
 
-    async def fetch(self, time_ms: int) -> bytes:
+    async def _probe(self, t: int) -> str:
+        """Prova a scaricare il pezzo al tempo t: 'ok', 'big' (troppo avanti), 'small' (altro errore)."""
+        for _ in range(6):
+            try:
+                await self.fetch(t, first_only=True)
+                return "ok"
+            except ChunkNotReady as e:
+                reason = str(e)
+                if "TIME_TOO_BIG" in reason:
+                    return "big"
+                m = re.search(r"(\d+)", reason)
+                await asyncio.sleep(min(int(m.group(1)) + 0.5 if m else 1.0, 5))
+            except Resync as e:
+                return "small:" + str(e)
+        return "flood"
+
+    async def find_live_edge(self, guess: int, status=None) -> int:
+        """Trova l'ultimo pezzo disponibile partendo da una stima, senza sapere quale orologio usa la diretta."""
+        def say(t):
+            if status:
+                status(t)
+        a = (guess // CHUNK_MS) * CHUNK_MS
+        r = await self._probe(a)
+        log.info("Ricerca diretta: %s → %s", a, r)
+        if r == "ok":
+            return a
+        if r == "flood":
+            raise Resync("Telegram chiede di rallentare")
+        say("Cerco il punto giusto della diretta…")
+        direction = -1 if r == "big" else 1          # troppo avanti → indietro; errore → avanti
+        far, far_r = a, r
+        near = None
+        step = CHUNK_MS
+        for _ in range(45):
+            t = a + direction * step
+            rt = await self._probe(t)
+            log.info("Ricerca diretta: %s → %s", t, rt)
+            if rt == "ok":
+                near = t
+                break
+            if rt == "flood":
+                raise Resync("Telegram chiede di rallentare")
+            if (rt == "big") != (r == "big"):        # attraversato il confine: cerco in mezzo
+                lo, hi = (t, a) if direction < 0 else (a, t)
+                lo_r = rt if direction < 0 else r
+                for _ in range(45):
+                    if hi - lo <= CHUNK_MS:
+                        break
+                    mid = ((lo + hi) // 2 // CHUNK_MS) * CHUNK_MS
+                    rm = await self._probe(mid)
+                    log.info("Ricerca diretta: %s → %s", mid, rm)
+                    if rm == "ok":
+                        near = mid
+                        break
+                    if rm == "big":
+                        hi = mid
+                    else:
+                        lo = mid
+                break
+            a, step = t, step * 2
+        if near is None:
+            raise NotLive()
+        # Ho un pezzo valido: avanzo fino all'ultimo disponibile.
+        lo, hi = near, near + CHUNK_MS
+        step = CHUNK_MS
+        while True:
+            rt = await self._probe(lo + step)
+            if rt != "ok":
+                hi = lo + step
+                break
+            lo, step = lo + step, step * 2
+        while hi - lo > CHUNK_MS:
+            mid = ((lo + hi) // 2 // CHUNK_MS) * CHUNK_MS
+            if mid <= lo:
+                break
+            if await self._probe(mid) == "ok":
+                lo = mid
+            else:
+                hi = mid
+        log.info("Ricerca diretta: ultimo pezzo disponibile %s", lo)
+        return lo
+
+    async def fetch(self, time_ms: int, first_only: bool = False) -> bytes:
         location = types.InputGroupCallStream(
             call=self.info.call, time_ms=time_ms, scale=0,
             video_channel=1, video_quality=self.quality,
@@ -264,22 +348,22 @@ class CallReader:
                 res = await self._invoke_stream_dc(
                     functions.upload.GetFileRequest(location=location, offset=offset, limit=GETFILE_LIMIT))
             except errors.FloodWaitError as e:
-                raise ChunkNotReady() from e
+                raise ChunkNotReady(f"FLOOD_WAIT_{e.seconds}") from e
             except errors.RPCError as e:
                 msg = _rpc_message(e)
                 if msg != getattr(self, "_last_err", None):
                     self._last_err = msg
                     log.info("Chunk %s: errore %s %s %s", time_ms, type(e).__name__, getattr(e, "code", ""), msg)
                 if "TIME_TOO_BIG" in msg or "FLOOD" in msg:
-                    raise ChunkNotReady() from e
+                    raise ChunkNotReady(msg) from e
                 if "GROUPCALL_JOIN_MISSING" in msg or "GROUPCALL_FORBIDDEN" in msg:
                     log.info("Rientro nella diretta (%s)", msg)
                     await self.join()
-                    raise ChunkNotReady() from e
+                    raise ChunkNotReady(msg) from e
                 raise Resync(msg) from e
             if isinstance(res, types.upload.FileCdnRedirect):
                 raise Resync("redirect CDN")
             data += res.bytes
-            if len(res.bytes) < GETFILE_LIMIT:
+            if first_only or len(res.bytes) < GETFILE_LIMIT:
                 return data
             offset += GETFILE_LIMIT
