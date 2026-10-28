@@ -1,0 +1,15 @@
+{
+  "id": "it.leonesport.canalisport",
+  "version": "1.0.0",
+  "vendor": "Leone Sporting Club",
+  "type": "web",
+  "main": "index.html",
+  "title": "Canali Sport",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "bgColor": "#0b1018",
+  "resolution": "1920x1080",
+  "disableBackHistoryAPI": true,
+  "allowVideoCapture": false,
+  "requiredPermissions": []
+}

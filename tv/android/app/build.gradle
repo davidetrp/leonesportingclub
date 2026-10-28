@@ -1,0 +1,34 @@
+plugins { id "com.android.application" }
+
+android {
+    namespace "it.leonesport.canalisport"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "it.leonesport.canalisport"
+        minSdk 22            // Fire OS 5 (Fire TV Stick di prima generazione) in su
+        targetSdk 34
+        versionCode Integer.parseInt(System.getenv("APP_VERSION_CODE") ?: "1")
+        versionName System.getenv("APP_VERSION_NAME") ?: "1.0"
+    }
+
+    signingConfigs {
+        release {
+            // Chiave fissa nel repository: serve solo perché gli aggiornamenti si installino sopra la versione vecchia.
+            storeFile file("../canali.keystore")
+            storePassword "canalisport"
+            keyAlias "canali"
+            keyPassword "canalisport"
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

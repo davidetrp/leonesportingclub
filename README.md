@@ -100,6 +100,49 @@ Comandi utili sul server, dentro `canali-sport`:
 
 **Sicurezza:** il sito vuole la password, blocca un indirizzo dopo 5 tentativi sbagliati per 15 minuti e non è indicizzato. La cartella `data/` sul server contiene la sessione del tuo account Telegram: non condividerla.
 
+## App per TV (Fire TV Stick e LG webOS)
+
+Le app per TV mostrano gli stessi canali e le stesse partite del sito, con il telecomando:
+
+| Tasto | Cosa fa |
+|---|---|
+| Frecce | si spostano tra canali, partite e impostazioni (riquadro arancione) |
+| OK | apre il canale; OK di nuovo sullo stesso canale = video a tutto schermo |
+| Su / Giù (a schermo intero) o CH+ / CH− | canale precedente / successivo |
+| Indietro | esce dallo schermo intero; dalla schermata dei canali chiude l'app |
+| Menu ≡ (solo Fire TV) | cambia indirizzo del server |
+
+Le app vengono compilate da GitHub a ogni modifica (release «tv-app»). Il tuo server ha due indirizzi corti per scaricarle:
+`http://IP-DEL-SERVER:8080/tv` (Fire TV) e `http://IP-DEL-SERVER:8080/tv/webos` (LG). Con il server online usa il tuo dominio, es. `https://leonesport.duckdns.org/tv`.
+
+### Fire TV Stick (con Downloader)
+
+1. **Attiva le opzioni sviluppatore** (una volta sola): *Impostazioni → La mia Fire TV → Informazioni* → seleziona il nome del dispositivo (es. «Fire TV Stick 4K») e premi **OK 7 volte** finché compare «Ora sei uno sviluppatore».
+2. **Installa Downloader**: dalla schermata principale cerca **Downloader** (icona arancione, di AFTVnews) → *Scarica*.
+3. **Consenti a Downloader di installare app**: *Impostazioni → La mia Fire TV → Opzioni sviluppatore → Installa app sconosciute* → metti **Downloader** su **ON**. (Sui modelli più vecchi: *Opzioni sviluppatore → App di origine sconosciuta → ON*.)
+4. **Scarica l'app**: apri Downloader, consenti l'accesso ai file se lo chiede, e nella casella dell'indirizzo scrivi
+   `http://IP-DEL-SERVER:8080/tv` (es. `http://192.168.1.20:8080/tv`) → **Go**.
+5. Finito il download si apre l'installazione: **Installa** → **Fine**. Quando Downloader chiede se cancellare il file, rispondi **Elimina** (non serve più).
+6. **Apri Canali Sport** (lo trovi in *App e canali*; tieni premuto il tasto Home per vederle tutte). La prima volta scrivi l'indirizzo del server, es. `http://192.168.1.20:8080`, poi **Collega** e inserisci la password del sito.
+7. **Aggiornare**: ripeti il passo 4 quando vuoi la versione nuova; l'app si installa sopra quella vecchia e tiene le impostazioni.
+
+### TV LG webOS (modalità sviluppatore)
+
+LG permette di installare app fuori dallo store solo con la sua **modalità sviluppatore** (gratuita). Serve il Mac una volta.
+
+1. **Account sviluppatore LG**: crealo gratis su <https://webostv.developer.lge.com> (*Login → Create Account*).
+2. **Sulla TV**: apri il **LG Content Store**, cerca **Developer Mode**, installala e aprila. Accedi con l'account del passo 1, attiva **Dev Mode Status** (la TV si riavvia), riaprila e attiva **Key Server**. Annota l'**IP** e la **passphrase** che mostra.
+3. **Sul Mac**, nel Terminale (TV e Mac sulla stessa rete):
+   ```bash
+   npm install -g @webos-tools/cli
+   ares-setup-device -a tv -i "host=IP-DELLA-TV" -i "port=9922" -i "username=prisoner"
+   ares-novacom --device tv --getkey        # quando chiede la passphrase, scrivi quella mostrata dalla TV
+   curl -L -o canali-sport-webos.ipk http://localhost:8080/tv/webos
+   ares-install --device tv canali-sport-webos.ipk
+   ```
+4. Sulla TV compare **Canali Sport** tra le app. La prima volta scrivi l'indirizzo del server, poi **Collega**.
+5. **La modalità sviluppatore scade dopo 50 ore**: apri l'app *Developer Mode* sulla TV e premi **Extend** (basta farlo ogni tanto). Se scade, l'app viene tolta e va reinstallata col passo 3.
+
 ## Cosa aspettarsi
 
 - **Quali dirette funzionano:** quelle trasmesse in streaming RTMP (da OBS, vMix o un encoder: in Telegram si avviano con *Trasmetti con…*). Le video chat avviate dal telefono con la fotocamera usano un altro sistema (WebRTC) e l'app ti avvisa che non sono leggibili.

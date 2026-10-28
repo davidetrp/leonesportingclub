@@ -17,7 +17,7 @@ from pathlib import Path
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -477,6 +477,18 @@ async def connect_telegram() -> None:
     log.info("Telegram collegato come %s", me.first_name)
 
 
+RELEASE = "https://github.com/davidetrp/leonesportingclub/releases/download/tv-app/"
+
+
+async def tv_apk(_: Request):
+    """Indirizzo corto per Downloader sul Fire TV: http://SERVER/tv → APK dell'ultima versione."""
+    return RedirectResponse(RELEASE + "canali-sport-firetv.apk", status_code=302)
+
+
+async def tv_webos(_: Request):
+    return RedirectResponse(RELEASE + "canali-sport-webos.ipk", status_code=302)
+
+
 async def robots(_: Request):
     return FileResponse(STATIC / "robots.txt", media_type="text/plain")
 
@@ -484,6 +496,8 @@ async def robots(_: Request):
 routes = [
     Route("/", index),
     Route("/robots.txt", robots),
+    Route("/tv", tv_apk),
+    Route("/tv/webos", tv_webos),
     Route("/api/login", login, methods=["POST"]),
     Route("/api/state", state),
     Route("/api/telegram-channels", telegram_channels),

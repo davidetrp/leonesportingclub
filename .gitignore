@@ -1,3 +1,6 @@
 data/
 .env
 __pycache__/
+tv/android/.gradle/
+tv/android/build/
+tv/android/app/build/
