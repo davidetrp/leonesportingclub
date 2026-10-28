@@ -280,6 +280,20 @@ body.theater .ctrl { display: none !important; }
         </form>
       </details>
 
+      <details id="lgBox">
+        <summary>Installa su TV LG</summary>
+        <form class="form" id="lgForm">
+          <p class="note">Sulla TV apri l'app <b>Developer Mode</b> con «Key Server» su ON, poi copia qui IP e passphrase. Il server deve essere nella stessa rete della TV.</p>
+          <div class="row">
+            <label for="lgIp" style="flex:1 1 160px">IP della TV <input type="text" id="lgIp" inputmode="decimal" placeholder="192.168.0.199" autocomplete="off"></label>
+            <label for="lgPass" style="flex:1 1 120px">Passphrase <input type="text" id="lgPass" placeholder="DBBB36" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+          </div>
+          <div class="row"><button class="btn" type="submit" id="lgBtn">Installa</button></div>
+          <ol class="steps" id="lgSteps" hidden></ol>
+          <p class="note" id="lgNote"></p>
+        </form>
+      </details>
+
       <footer id="foot">I canali sono ordinati per spettatori e si aggiornano ogni 20 secondi. Con ★ fissi in cima quelli che preferisci, su questo dispositivo.</footer>
     </div>
   </div>
@@ -682,6 +696,36 @@ body.theater .ctrl { display: none !important; }
   $("evRefresh").addEventListener("click", function () {
     $("evRefresh").disabled = true; $("evRefresh").textContent = "…";
     loadEvents(true).then(function () { $("evRefresh").disabled = false; $("evRefresh").textContent = "Aggiorna"; refresh().catch(function () {}); });
+  });
+
+  // ---------------------------------------------------------------- installazione TV LG
+  try { var lgSaved = JSON.parse(localStorage.getItem("cs-lg") || "{}"); if (lgSaved.ip) $("lgIp").value = lgSaved.ip; } catch (e) {}
+  function lgShow(r) {
+    var ol = $("lgSteps"); ol.innerHTML = ""; ol.hidden = !(r.steps && r.steps.length);
+    (r.steps || []).forEach(function (t, i) {
+      var li = document.createElement("li"); li.textContent = t;
+      if (r.running && i === r.steps.length - 1) li.className = "now";
+      ol.appendChild(li);
+    });
+    if (!r.running && r.result) {
+      $("lgBtn").disabled = false; $("lgBtn").textContent = "Installa";
+      $("lgNote").className = "note " + (r.result.ok ? "good" : "bad");
+      $("lgNote").textContent = r.result.ok ? "Installata: la trovi tra le app della TV (già collegata a " + r.result.server + ")." : r.result.error;
+    }
+  }
+  function lgPoll() {
+    api("/api/tv/lg").then(function (r) { lgShow(r); if (r.running) setTimeout(lgPoll, 1000); }).catch(function () { setTimeout(lgPoll, 2000); });
+  }
+  $("lgForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var ip = $("lgIp").value.trim(), pass = $("lgPass").value.trim();
+    if (!ip || !pass) { $("lgNote").className = "note bad"; $("lgNote").textContent = "Scrivi IP e passphrase della TV."; return; }
+    try { localStorage.setItem("cs-lg", JSON.stringify({ ip: ip })); } catch (e2) {}
+    $("lgBtn").disabled = true; $("lgBtn").textContent = "Installo…"; $("lgNote").textContent = "";
+    api("/api/tv/lg", { method: "POST", body: { ip: ip, passphrase: pass } }).then(function (r) {
+      if (r.error) { $("lgBtn").disabled = false; $("lgBtn").textContent = "Installa"; $("lgNote").className = "note bad"; $("lgNote").textContent = r.error; return; }
+      lgShow(r); lgPoll();
+    }).catch(function () {});
   });
 
   // ---------------------------------------------------------------- fixtures

@@ -489,6 +489,36 @@ async def tv_webos(_: Request):
     return RedirectResponse(RELEASE + "canali-sport-webos.ipk", status_code=302)
 
 
+_lg = {"running": False, "steps": [], "result": None}
+
+
+async def lg_install(request: Request):
+    """Installa l'app sulla TV LG (POST con ip e passphrase) e ne restituisce l'avanzamento (GET)."""
+    if not is_authed(request):
+        return need_auth()
+    if request.method == "POST" and not _lg["running"]:
+        body = await request.json()
+        ip = str(body.get("ip") or "").strip()
+        passphrase = str(body.get("passphrase") or "").strip().upper()
+        if not ip or not passphrase:
+            return JSONResponse({"error": "Scrivi IP e passphrase della TV."}, status_code=400)
+        _lg.update(running=True, steps=["Avvio…"], result=None)
+
+        async def run():
+            import tv_install
+            try:
+                _lg["result"] = await asyncio.to_thread(tv_install.install, ip, passphrase, _lg["steps"])
+            except tv_install.InstallError as e:
+                _lg["result"] = {"ok": False, "error": str(e)}
+            except Exception as e:  # noqa: BLE001
+                log.exception("Installazione TV LG non riuscita")
+                _lg["result"] = {"ok": False, "error": f"Errore: {e}"}
+            finally:
+                _lg["running"] = False
+        asyncio.create_task(run())
+    return JSONResponse({"running": _lg["running"], "steps": _lg["steps"], "result": _lg["result"]})
+
+
 async def robots(_: Request):
     return FileResponse(STATIC / "robots.txt", media_type="text/plain")
 
@@ -498,6 +528,7 @@ routes = [
     Route("/robots.txt", robots),
     Route("/tv", tv_apk),
     Route("/tv/webos", tv_webos),
+    Route("/api/tv/lg", lg_install, methods=["GET", "POST"]),
     Route("/api/login", login, methods=["POST"]),
     Route("/api/state", state),
     Route("/api/telegram-channels", telegram_channels),

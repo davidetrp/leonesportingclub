@@ -54,6 +54,11 @@
     return v;
   }
   function go(v) { location.href = v + "/?tv=1"; }
+  // Installata dal server: la TV ci passa già l'indirizzo del server nei parametri di avvio.
+  try {
+    var lp = window.PalmSystem && PalmSystem.launchParams ? JSON.parse(PalmSystem.launchParams) : {};
+    if (lp && lp.server) save(normalize(lp.server));
+  } catch (e) {}
   var saved = load();
   var m = q.match(/[?&]err=([^&]*)/);
   if (m) $("err").textContent = "Non riesco ad aprire " + (saved || "il server") + ": " + decodeURIComponent(m[1]) + ". Controlla l'indirizzo e che il server sia acceso.";
