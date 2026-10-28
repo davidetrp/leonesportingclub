@@ -19,7 +19,6 @@ from chunks import (CHUNK_MS, ChunkNotReady, NotLive, Resync, Unsupported,
 log = logging.getLogger("streamer")
 
 PLAYLIST_SIZE = 12       # segmenti nella playlist live
-KEEP_FILES = 24          # segmenti tenuti su disco
 IDLE_STOP_S = 45         # si ferma se nessuno guarda da 45 s
 RESYNC_EVERY = 30        # ogni 30 chunk controlla di non essere rimasto indietro
 PREFETCH = 4             # pezzi scaricati in anticipo, in parallelo
@@ -51,20 +50,26 @@ async def probe_codecs(path: Path) -> tuple[str | None, str | None]:
 
 
 class HlsWriter:
+    """Un unico ffmpeg sempre acceso produce l'HLS: ogni pezzo da 1 s viene rimuxato in MPEG-TS con il suo
+    orario e passato in coda al convertitore. Così i confini tra i pezzi combaciano (l'audio viene
+    raddrizzato con aresample) e i segmenti sono tagliati sui fotogrammi chiave: niente scatti ogni secondo."""
+
     def __init__(self, out_dir: Path):
         self.dir = out_dir
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.seq = 0
-        self.segments: list[tuple[int, float, bool]] = []  # (numero, durata, discontinuità prima)
         self.offset_s = 0.0
         self.codec_args: list[str] | None = None
-        self.pending_discontinuity = False
+        self.has_audio = True
+        self.proc: asyncio.subprocess.Process | None = None
+        self._err_task: asyncio.Task | None = None
+        self.failures = 0
 
     async def _decide_codecs(self, src: Path) -> None:
         v, a = await probe_codecs(src)
         args: list[str] = []
         args += ["-c:v", "copy"] if v == "h264" else [
-            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p"]
+            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-g", "25"]
+        self.has_audio = a is not None
         if a is None:
             args += ["-an"]
         elif a in ("aac", "mp3"):
@@ -74,54 +79,68 @@ class HlsWriter:
         self.codec_args = args
         log.info("Codec sorgente video=%s audio=%s → %s", v, a, " ".join(args))
 
+    async def _start(self) -> None:
+        audio = (["-map", "0:a:0?", "-c:a", "aac", "-b:a", "128k", "-af", "aresample=async=1000:first_pts=0"]
+                 if self.has_audio else ["-an"])
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-fflags", "+genpts+discardcorrupt",
+               "-f", "mpegts", "-i", "pipe:0", "-map", "0:v:0?", "-c:v", "copy", *audio,
+               "-f", "hls", "-hls_time", "2", "-hls_list_size", str(PLAYLIST_SIZE),
+               "-hls_flags", "delete_segments+independent_segments+omit_endlist+temp_file",
+               "-hls_segment_filename", str(self.dir / "seg%d.ts"), str(self.dir / "index.m3u8")]
+        self.proc = await asyncio.create_subprocess_exec(
+            *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+
+        async def errors(proc):
+            async for line in proc.stderr:
+                log.info("ffmpeg HLS: %s", line.decode(errors="replace").strip()[:200])
+        self._err_task = asyncio.create_task(errors(self.proc))
+
     async def add(self, media: bytes, container: str) -> bool:
         ext = {"mp4": "mp4", "mov": "mp4", "ogg": "ogg", "matroska": "mkv", "webm": "webm"}.get(container, "bin")
         src = self.dir / f"in.{ext}"
         src.write_bytes(media)
         if self.codec_args is None:
             await self._decide_codecs(src)
-        seg_no = self.seq
-        out = self.dir / f"seg{seg_no}.ts"
-        code, _, err = await run(
+        code, ts, err = await run(
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
             "-t", f"{CHUNK_MS / 1000:.3f}",   # come tgcalls: quel che sfora il secondo si scarta
             *self.codec_args, "-muxdelay", "0", "-muxpreload", "0",
-            "-output_ts_offset", f"{self.offset_s:.3f}", "-f", "mpegts", str(out))
-        if code != 0 or not out.exists() or out.stat().st_size == 0:
-            log.warning("ffmpeg non ha prodotto il segmento: %s", err.decode(errors="replace")[-300:])
-            self.pending_discontinuity = True
+            "-output_ts_offset", f"{self.offset_s:.3f}", "-f", "mpegts", "pipe:1")
+        if code != 0 or not ts:
+            log.warning("ffmpeg non ha letto il pezzo: %s", err.decode(errors="replace")[-300:])
             return False
-        duration = CHUNK_MS / 1000
-        self.segments.append((seg_no, duration, self.pending_discontinuity))
-        self.pending_discontinuity = False
-        self.seq += 1
-        self.offset_s += duration
-        self._write_playlist()
-        old = seg_no - KEEP_FILES
-        if old >= 0:
-            (self.dir / f"seg{old}.ts").unlink(missing_ok=True)
+        if self.proc is None or self.proc.returncode is not None:
+            if self.proc is not None:
+                log.warning("Il convertitore HLS si è fermato: lo riavvio")
+            await self._start()
+        try:
+            self.proc.stdin.write(ts)
+            await self.proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            self.proc = None
+            return False
+        self.offset_s += CHUNK_MS / 1000      # orologio nostro: anche dopo un salto il flusso resta continuo
         return True
 
     def mark_discontinuity(self) -> None:
-        self.pending_discontinuity = True
-
-    def _write_playlist(self) -> None:
-        segs = self.segments[-PLAYLIST_SIZE:]
-        lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:2",
-                 f"#EXT-X-MEDIA-SEQUENCE:{segs[0][0]}"]
-        disc_count = sum(1 for s in self.segments[:-len(segs)] if s[2])
-        lines.append(f"#EXT-X-DISCONTINUITY-SEQUENCE:{disc_count}")
-        for i, (n, dur, disc) in enumerate(segs):
-            if disc and i > 0:
-                lines.append("#EXT-X-DISCONTINUITY")
-            lines += [f"#EXTINF:{dur:.3f},", f"seg{n}.ts"]
-        tmp = self.dir / "index.m3u8.tmp"
-        tmp.write_text("\n".join(lines) + "\n")
-        tmp.replace(self.dir / "index.m3u8")
+        pass                                   # l'orologio è continuo: non servono discontinuità
 
     @property
     def ready(self) -> bool:
-        return len(self.segments) >= 4
+        try:
+            return (self.dir / "index.m3u8").read_text().count("#EXTINF") >= 3
+        except OSError:
+            return False
+
+    async def close(self) -> None:
+        if self.proc is not None and self.proc.returncode is None:
+            try:
+                self.proc.stdin.close()
+                await asyncio.wait_for(self.proc.wait(), timeout=3)
+            except (asyncio.TimeoutError, BrokenPipeError, ConnectionResetError):
+                self.proc.kill()
+        if self._err_task:
+            self._err_task.cancel()
 
 
 # --------------------------------------------------------------------------- sources
@@ -382,6 +401,8 @@ class SlotStreamer:
                 msg = f"Errore: {e}"
             self.state, self.message = "error", msg
         finally:
+            if self.writer is not None:
+                await self.writer.close()
             if source is not None:
                 try:
                     await source.close()
