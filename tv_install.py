@@ -64,11 +64,22 @@ def install(tv_ip: str, passphrase: str, steps: list[str]) -> dict:
     step("Mi collego alla TV…")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    try:
-        ssh.connect(tv_ip, port=9922, username="prisoner", pkey=key, allow_agent=False, look_for_keys=False,
-                    timeout=10, banner_timeout=15, auth_timeout=15)
-    except Exception as e:  # noqa: BLE001
-        raise InstallError(f"Collegamento alla TV non riuscito: {e}") from e
+    last = None
+    # Il server SSH delle TV LG è vecchio: se l'autenticazione moderna (rsa-sha2) fallisce, uso ssh-rsa classico.
+    for disabled in (None, {"pubkeys": ["rsa-sha2-512", "rsa-sha2-256"]}):
+        try:
+            ssh.connect(tv_ip, port=9922, username="prisoner", pkey=key, allow_agent=False, look_for_keys=False,
+                        timeout=10, banner_timeout=15, auth_timeout=15, disabled_algorithms=disabled)
+            last = None
+            break
+        except Exception as e:  # noqa: BLE001
+            last = e
+            log.info("TV LG: collegamento SSH non riuscito (%s): %s", "classico" if disabled else "moderno", e)
+            ssh.close()
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    if last is not None:
+        raise InstallError(f"Collegamento alla TV non riuscito: {last}")
 
     try:
         step("Scarico l'ultima versione dell'app…")
