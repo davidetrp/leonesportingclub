@@ -18,10 +18,11 @@ from chunks import (CHUNK_MS, ChunkNotReady, NotLive, Resync, Unsupported,
 
 log = logging.getLogger("streamer")
 
-PLAYLIST_SIZE = 8        # segmenti nella playlist live
+PLAYLIST_SIZE = 12       # segmenti nella playlist live
 KEEP_FILES = 24          # segmenti tenuti su disco
 IDLE_STOP_S = 45         # si ferma se nessuno guarda da 45 s
 RESYNC_EVERY = 30        # ogni 30 chunk controlla di non essere rimasto indietro
+PREFETCH = 4             # pezzi scaricati in anticipo, in parallelo
 FIRST_CHUNK_WAIT_S = 12  # se il primo pezzo non arriva entro questo tempo, rientro nella diretta
 MAX_REJOINS = 3
 MAX_LAG_MS = 8000
@@ -120,7 +121,7 @@ class HlsWriter:
 
     @property
     def ready(self) -> bool:
-        return len(self.segments) >= 3
+        return len(self.segments) >= 4
 
 
 # --------------------------------------------------------------------------- sources
@@ -135,6 +136,7 @@ class TelegramSource:
         self.count = 0
         self.jumped = False
         self.on_status = None
+        self._tasks: dict[int, asyncio.Task] = {}
 
     def _status(self, text: str) -> None:
         if self.on_status:
@@ -156,6 +158,35 @@ class TelegramSource:
                 await self._rejoin(f"punto di partenza non trovato ({e or 'nessun pezzo'})")
         self._status("Scarico il primo pezzo di video…")
 
+    def _clear_prefetch(self) -> None:
+        for t in self._tasks.values():
+            t.cancel()
+        self._tasks.clear()
+
+    async def _fetch_patient(self, t: int) -> bytes:
+        """Pezzo futuro: «non ancora pronto» è normale, riprovo finché esce (al massimo 15 s)."""
+        waited = 0.0
+        while True:
+            try:
+                return await self.reader.fetch(t)
+            except ChunkNotReady:
+                if waited > 15:
+                    raise
+                await asyncio.sleep(0.3)
+                waited += 0.3
+
+    async def _take(self, t: int) -> bytes:
+        """Restituisce il pezzo t, tenendo già in download i successivi (niente scatti per attese di rete)."""
+        if not self.count:
+            return await self.reader.fetch(t)
+        for old in [x for x in self._tasks if x < t]:
+            self._tasks.pop(old).cancel()
+        for k in range(PREFETCH):
+            tt = t + k * CHUNK_MS
+            if tt not in self._tasks:
+                self._tasks[tt] = asyncio.create_task(self._fetch_patient(tt))
+        return await self._tasks.pop(t)
+
     async def _rejoin(self, why: str) -> None:
         self.rejoins += 1
         log.info("Rientro nella diretta (%d/%d): %s", self.rejoins, MAX_REJOINS, why)
@@ -173,10 +204,11 @@ class TelegramSource:
                 log.info("Troppo indietro di %d ms: salto avanti", end - self.time_ms)
                 self.time_ms = (end // CHUNK_MS) * CHUNK_MS - 2000
                 self.jumped = True
+                self._clear_prefetch()
         waited = 0.0
         while True:
             try:
-                data = await self.reader.fetch(self.time_ms)
+                data = await self._take(self.time_ms)
                 break
             except ChunkNotReady as e:
                 if not self.count:
@@ -202,6 +234,7 @@ class TelegramSource:
                 self.resyncs = getattr(self, "resyncs", 0) + 1
                 log.info("Risincronizzo (%d): %s", self.resyncs, e)
                 self._status(f"Riprovo a sincronizzarmi… (Telegram: {e})")
+                self._clear_prefetch()
                 if self.resyncs > 8:
                     raise RuntimeError(f"Telegram non dà i pezzi della diretta ({e})")
                 await asyncio.sleep(1)
@@ -215,6 +248,7 @@ class TelegramSource:
         return parse_chunk(data) if data else None
 
     async def close(self) -> None:
+        self._clear_prefetch()
         await self.reader.leave()
 
 
