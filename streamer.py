@@ -22,6 +22,8 @@ PLAYLIST_SIZE = 8        # segmenti nella playlist live
 KEEP_FILES = 24          # segmenti tenuti su disco
 IDLE_STOP_S = 45         # si ferma se nessuno guarda da 45 s
 RESYNC_EVERY = 30        # ogni 30 chunk controlla di non essere rimasto indietro
+FIRST_CHUNK_WAIT_S = 12  # se il primo pezzo non arriva entro questo tempo, rientro nella diretta
+MAX_REJOINS = 3
 MAX_LAG_MS = 8000
 
 
@@ -128,6 +130,7 @@ class TelegramSource:
 
     def __init__(self, reader):
         self.reader = reader
+        self.rejoins = 0
         self.time_ms = 0
         self.count = 0
         self.jumped = False
@@ -141,9 +144,23 @@ class TelegramSource:
         self._status("Entro nella diretta…")
         await self.reader.join()
         self.reader.status_cb = self._status
-        self._status("Cerco il punto di partenza…")
-        self.time_ms = await self.reader.start_ms()
+        self.rejoins = 0
+        while True:
+            self._status("Cerco il punto di partenza…")
+            try:
+                self.time_ms = await self.reader.start_ms()
+                break
+            except (NotLive, Resync) as e:
+                if self.rejoins >= MAX_REJOINS:
+                    raise
+                await self._rejoin(f"punto di partenza non trovato ({e or 'nessun pezzo'})")
         self._status("Scarico il primo pezzo di video…")
+
+    async def _rejoin(self, why: str) -> None:
+        self.rejoins += 1
+        log.info("Rientro nella diretta (%d/%d): %s", self.rejoins, MAX_REJOINS, why)
+        self._status(f"Il video non arriva: rientro nella diretta ({self.rejoins}/{MAX_REJOINS})…")
+        await self.reader.rejoin()
 
     async def next(self):
         self.jumped = False
@@ -164,6 +181,12 @@ class TelegramSource:
             except ChunkNotReady as e:
                 if not self.count:
                     self._status(f"Aspetto il primo pezzo di video… (Telegram: {e or 'non pronto'}, {int(waited)} s)")
+                    # Primo pezzo che non arriva: come quando apri la diretta su Telegram, rientro.
+                    if waited > FIRST_CHUNK_WAIT_S and self.rejoins < MAX_REJOINS:
+                        await self._rejoin(f"nessun pezzo dopo {FIRST_CHUNK_WAIT_S} s ({e})")
+                        self.time_ms = await self.reader.start_ms()
+                        waited = 0.0
+                        continue
                 await asyncio.sleep(0.1)
                 waited += 0.1
                 if waited > 20:

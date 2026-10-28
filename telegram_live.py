@@ -184,7 +184,7 @@ class CallReader:
         params = {
             "ufrag": secrets.token_hex(2),
             "pwd": secrets.token_urlsafe(18),
-            "fingerprints": [{"hash": "sha-256", "setup": "active", "fingerprint": fingerprint}],
+            "fingerprints": [{"hash": "sha-256", "setup": "passive", "fingerprint": fingerprint}],   # come tgcalls
             "ssrc": self.ssrc,
         }
         updates = await self._patient(lambda: self.client(functions.phone.JoinGroupCallRequest(
@@ -210,6 +210,26 @@ class CallReader:
         log.info("Entrato nella diretta %s: rtmp=%s, dc stream=%s, dc account=%s, modalità=%s",
                  self.peer_id, info.rtmp, info.dc_id, self.client.session.dc_id,
                  {k: v for k, v in mode.items() if k in ("stream", "rtmp")})
+        await self.verify_joined()
+
+    async def verify_joined(self) -> bool:
+        """Chiede a Telegram se il nostro ingresso risulta registrato (come phone.checkGroupCall dell'app ufficiale)."""
+        try:
+            await asyncio.sleep(1)
+            res = await self.client(functions.phone.CheckGroupCallRequest(call=self.info.call, sources=[self.ssrc]))
+            ok = self.ssrc in list(res or [])
+            log.info("Controllo ingresso nella diretta: %s", "registrato" if ok else "NON registrato")
+            return ok
+        except Exception as e:  # noqa: BLE001
+            log.info("Controllo ingresso nella diretta non riuscito: %s", e)
+            return False
+
+    async def rejoin(self) -> None:
+        """Esce e rientra nella diretta: è quello che sblocca lo stream quando il primo ingresso non è valido."""
+        log.info("Rientro nella diretta %s", self.peer_id)
+        await self.leave()
+        await asyncio.sleep(1.5)
+        await self.join()
 
     async def leave(self) -> None:
         if not self.info:
