@@ -30,7 +30,18 @@ from bot_events import demo_events
 from matches import today_matches
 from streamer import DemoSource, SlotStreamer, TelegramSource
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+def _log_handlers():
+    """Log anche su data/server.log (max 2 MB × 2), utile per capire scatti e problemi."""
+    from logging.handlers import RotatingFileHandler
+    hs = [logging.StreamHandler()]
+    try:
+        hs.append(RotatingFileHandler(config.DATA_DIR / "server.log", maxBytes=2_000_000, backupCount=1, encoding="utf-8"))
+    except OSError:
+        pass
+    return hs
+
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=_log_handlers())
 log = logging.getLogger("server")
 
 MAX_CHANNELS = 60
@@ -573,7 +584,12 @@ async def scan_loop() -> None:
                         App.detected.pop(c["id"], None)
                         continue
                     d, s = App.detected.get(c["id"]), App.streamers.get(c["id"])
-                    every = SCAN_PLAYING_S if (s and s.state == "live") else SCAN_IDLE_S
+                    playing_here = bool(s and s.state == "live")
+                    # Mai entrare in un'altra diretta mentre se ne guarda una: Telegram tiene l'account in una
+                    # diretta alla volta e quella in visione si interromperebbe (scatti e rientri).
+                    if not playing_here and not config.DEMO and any(o.running for o in App.streamers.values()):
+                        continue
+                    every = SCAN_PLAYING_S if playing_here else SCAN_IDLE_S
                     if d and time.monotonic() - d["at"] < every:
                         continue
                     await detect_channel(c, fixtures)
