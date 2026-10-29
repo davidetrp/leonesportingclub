@@ -1293,7 +1293,36 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     return false;
   };
 
+  // ---- Niente screensaver mentre si guarda una diretta
+  // La LG avvia lo screensaver se il video non è a tutto schermo: dopo un minuto senza tasti passo a tutto schermo.
+  var IDLE_FULL_MS = 60000, lastKey = Date.now();
+  ["mousemove", "wheel", "click"].forEach(function (ev) { document.addEventListener(ev, function () { lastKey = Date.now(); }, { passive: true }); });
+  function videoPlaying() { return playing && !video.paused && video.readyState > 2; }
+  if (TV) setInterval(function () {
+    if (Date.now() - lastKey > IDLE_FULL_MS && videoPlaying() && !document.body.classList.contains("theater") && $("sheet").hidden) theater(true);
+  }, 5000);
+  // In più, sulla LG chiedo alla TV di non avviarlo mentre il video va (lo stesso servizio che usa Kodi).
+  // Se la TV non lo permette a quest'app, la richiesta viene ignorata.
+  (function webosNoScreensaver() {
+    if (!TV || typeof window.PalmServiceBridge !== "function") return;
+    var name = "leone-sporting-club", bridges = [];
+    function call(uri, params, cb) {
+      try {
+        var b = new PalmServiceBridge(); bridges.push(b);
+        if (cb) b.onservicecallback = function (msg) { try { cb(JSON.parse(msg)); } catch (e) {} };
+        b.call(uri, JSON.stringify(params));
+      } catch (e) {}
+    }
+    call("luna://com.webos.service.tvpower/power/registerScreenSaverRequest", { subscribe: true, clientName: name }, function (r) {
+      if (!r || !r.timestamp) return;
+      call("luna://com.webos.service.tvpower/power/responseScreenSaverRequest", { clientName: name, ack: !videoPlaying(), timestamp: r.timestamp });
+      if (bridges.length > 20) bridges.splice(1, bridges.length - 2);
+    });
+  })();
+  try { if (TV && navigator.wakeLock) navigator.wakeLock.request("screen").catch(function () {}); } catch (e) {}
+
   document.addEventListener("keydown", function (e) {
+    lastKey = Date.now();
     var t = e.target && e.target.tagName, key = e.key, code = e.keyCode;
     var back = key === "Escape" || key === "GoBack" || key === "BrowserBack" || code === 461 || code === 10009;
     if (back) {
