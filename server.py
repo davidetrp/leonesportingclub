@@ -333,7 +333,7 @@ async def play(request: Request):
             others.remove(oldest)
     if request.method == "POST" and s.state in ("idle", "offline", "error", "unsupported"):
         App.live_cache.pop(ch["peer_id"], None)
-        await cancel_snapshot(ch["peer_id"])
+        await cancel_snapshot()
         s.start()
     s.touch()
     return JSONResponse({"stream": s.state, "message": s.message})
@@ -503,10 +503,11 @@ async def hls(request: Request):
 SCAN_PLAYING_S = 120      # canale aperto: rilettura dal video già scaricato
 
 
-async def cancel_snapshot(peer_id) -> None:
-    """Se sto leggendo un fotogramma dalla stessa diretta, lo interrompo (esce dalla diretta) prima di aprirla."""
+async def cancel_snapshot(peer_id=None) -> None:
+    """Interrompe la lettura di un fotogramma in corso (esce da quella diretta) prima di aprire un canale:
+    l'account sta in una diretta alla volta, e la lettura rallenterebbe quella da guardare."""
     snap = App.snapshot
-    if snap and snap[0] == peer_id and not snap[1].done():
+    if snap and (peer_id is None or snap[0] == peer_id) and not snap[1].done():
         snap[1].cancel()
         try:
             await snap[1]
