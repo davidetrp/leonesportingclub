@@ -155,6 +155,10 @@ Mentre usi l'app, il server guarda il riquadro del punteggio **in alto a sinistr
 
 Sul Mac usa il riconoscimento testo di macOS (lo prepara da solo al primo avvio, se ci sono gli strumenti per sviluppatori di Apple, gli stessi che chiede Homebrew). Se non riesce, usa Tesseract: `brew install tesseract`.
 
+## Riposo
+
+Se nessuno usa l'app per 15 minuti, il server si stacca da Telegram e resta fermo: niente collegamenti, niente letture dal video. Alla prima apertura dell'app si ricollega da solo in pochi secondi, mentre gira lo splash. Il Mac resta acceso e raggiungibile (lo schermo può spegnersi), così l'app si apre sempre, anche da fuori casa.
+
 ## Problemi comuni
 
 | Messaggio nell'app | Cosa fare |

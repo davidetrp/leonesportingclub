@@ -17,6 +17,7 @@ from pathlib import Path
 
 import uvicorn
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
@@ -55,6 +56,9 @@ class App:
     detected: dict[int, dict] = {}     # partita letta nel video: {cid: {title, score, league, at}}
     last_seen = 0.0                    # ultima volta che qualcuno ha aperto l'app
     snapshot = None                    # (peer_id, task) del fotogramma in corso
+    last_activity = 0.0                # ultima richiesta dall'app (riposo dopo REST_AFTER_S)
+    resting = False                    # True = staccato da Telegram perché nessuno usa l'app
+    wake_lock = asyncio.Lock()
     login = AccountLogin()
     demo_account = {"name": "Account demo", "username": "leone_demo", "phone": "393331234567"}
 
@@ -592,9 +596,12 @@ async def lifespan(_app):
         log.info("Modalità DEMO: canali di prova, nessun collegamento a Telegram.")
     else:
         await connect_telegram()
+    App.last_activity = time.monotonic()
     scan = asyncio.create_task(scan_loop())
+    rest = asyncio.create_task(rest_loop())
     yield
     scan.cancel()
+    rest.cancel()
     for s in list(App.streamers.values()):
         await s.stop()
     await App.login.cancel()
@@ -811,7 +818,61 @@ routes = [
     Mount("/static", StaticFiles(directory=STATIC), name="static"),
 ]
 
-app = Starlette(routes=routes, lifespan=lifespan)
+# --------------------------------------------------------------------------- riposo quando nessuno usa l'app
+
+REST_AFTER_S = 15 * 60
+
+
+async def wake_up() -> None:
+    async with App.wake_lock:
+        if not App.resting:
+            return
+        log.info("Qualcuno ha aperto l'app: mi ricollego a Telegram")
+        App.resting = False
+        await connect_telegram()
+
+
+async def rest_loop() -> None:
+    """Dopo 15 minuti senza richieste dall'app si stacca da Telegram: il server resta acceso ma non fa niente."""
+    while True:
+        await asyncio.sleep(30)
+        try:
+            idle = time.monotonic() - App.last_activity
+            busy = any(s.running for s in App.streamers.values()) or App.snapshot or App.login.step
+            if config.DEMO or App.resting or not App.client or busy or idle < REST_AFTER_S:
+                continue
+            async with App.wake_lock:
+                log.info("Nessuno usa l'app da %d minuti: riposo (staccato da Telegram)", idle // 60)
+                client = App.client
+                App.client = App.live = App.events = None
+                App.live_cache.clear()
+                App.events_cache = None
+                App.resting = True
+                try:
+                    await client.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("Riposo")
+
+
+class WakeMiddleware:
+    """Ogni richiesta dell'app segna attività e, se il server riposa, lo risveglia prima di rispondere."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].startswith(("/api/", "/hls/")):
+            App.last_activity = time.monotonic()
+            if App.resting:
+                await wake_up()
+        await self.app(scope, receive, send)
+
+
+app = Starlette(routes=routes, lifespan=lifespan, middleware=[Middleware(WakeMiddleware)])
 
 if __name__ == "__main__":
     log.info("Apri http://<indirizzo-del-server>:%s dal telefono", config.PORT)
