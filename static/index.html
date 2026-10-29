@@ -882,7 +882,9 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     playing = true;
     var url = "/hls/" + id + "/index.m3u8";
     if (window.Hls && window.Hls.isSupported()) {
-      hls = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 8, maxLiveSyncPlaybackRate: 1.1, maxBufferLength: 20, backBufferLength: 10, manifestLoadingMaxRetry: 10, levelLoadingMaxRetry: 10, fragLoadingMaxRetry: 10 });
+      // Velocità costante (niente accelerazioni per recuperare il ritardo) e qualche secondo di scorta in più:
+      // su reti che vanno a strappi il video resta fluido, con 2–4 s di ritardo in più rispetto a prima.
+      hls = new Hls({ liveSyncDurationCount: 4, liveMaxLatencyDurationCount: 12, maxLiveSyncPlaybackRate: 1, maxBufferLength: 30, backBufferLength: 10, manifestLoadingMaxRetry: 10, levelLoadingMaxRetry: 10, fragLoadingMaxRetry: 10 });
       hls.loadSource(url); hls.attachMedia(video);
       hls.on(Hls.Events.ERROR, function (_e, data) {
         if (!data.fatal) return;

@@ -244,6 +244,8 @@ async def state(request: Request):
     for c, st in zip(channels, statuses):
         stv = App.streamers.get(c["id"])
         ev = next((e for e in evs if e.get("peer_id") is not None and e["peer_id"] == c["peer_id"]), None)
+        if st.get("live") is False:
+            App.detected.pop(c["id"], None)
         det = App.detected.get(c["id"]) if st.get("live") else None
         out.append({**c, **st,
                     "match": {k: det.get(k) for k in ("title", "score", "league")} if det and det.get("title") else None,
@@ -500,7 +502,8 @@ async def hls(request: Request):
 
 # --------------------------------------------------------------------------- nome della partita dal video
 
-SCAN_PLAYING_S = 120      # canale aperto: rilettura dal video già scaricato
+RETRY_S = 90              # canale aperto senza nome: riprova dopo 90 s
+MAX_TRIES = 5             # poi smette fino alla prossima diretta
 
 
 async def cancel_snapshot(peer_id=None) -> None:
@@ -563,12 +566,14 @@ async def detect_channel(c: dict, fixtures: list[dict]) -> None:
             text = DemoSource.BUGS[c["id"] % len(DemoSource.BUGS)]
         res = scorebug.identify(text, fixtures)
         log.info("Canale %s (%s): letto «%s» → %s", c["id"], how, " ".join(text.split())[:80], res and res["title"])
-        App.detected[c["id"]] = {**(res or {"title": None}), "at": time.monotonic()}
+        prev = App.detected.get(c["id"]) or {}
+        App.detected[c["id"]] = {**(res or {"title": None}), "at": time.monotonic(), "tries": prev.get("tries", 0) + 1}
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001
         log.info("Canale %s: nome partita non letto (%s)", c["id"], e)
-        App.detected[c["id"]] = {**App.detected.get(c["id"], {"title": None}), "at": time.monotonic()}
+        prev = App.detected.get(c["id"]) or {"title": None}
+        App.detected[c["id"]] = {**prev, "at": time.monotonic(), "tries": prev.get("tries", 0) + 1}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -588,7 +593,9 @@ async def scan_loop() -> None:
                 if not (s and s.state == "live"):
                     continue
                 d = App.detected.get(c["id"])
-                if d and time.monotonic() - d["at"] < SCAN_PLAYING_S:
+                # Una volta sola: trovato il nome non si rilegge più finché la diretta non finisce.
+                # Se non si trova (pubblicità, replay, riquadro nascosto) riprova al massimo MAX_TRIES volte.
+                if d and (d.get("title") or d.get("tries", 0) >= MAX_TRIES or time.monotonic() - d["at"] < RETRY_S):
                     continue
                 if fixtures is None:
                     fixtures = (await today_matches()).get("matches") or []
@@ -603,7 +610,6 @@ async def scan_loop() -> None:
 # --------------------------------------------------------------------------- preload durante lo splash
 
 PRELOAD_BUDGET_S = 12      # massimo di tempo per leggere i nomi delle partite mentre gira lo splash
-DETECT_FRESH_S = 15 * 60   # un nome letto da meno di 15 minuti non si rilegge
 _preload = {"running": False, "done": 0, "total": 0, "step": ""}
 
 
@@ -620,9 +626,12 @@ async def _run_preload() -> None:
             fixtures = (await asyncio.wait_for(today_matches(), 8)).get("matches") or []
         except Exception:  # noqa: BLE001
             fixtures = []
+        for c, st in zip(channels, statuses):          # diretta finita: il nome si dimentica
+            if st.get("live") is False:
+                App.detected.pop(c["id"], None)
+        # Solo i canali mai provati in questa diretta: un ingresso per canale, non a ogni apertura dell'app.
         todo = [(c, st) for c, st in zip(channels, statuses)
-                if st.get("live") and (st.get("viewers") or 0) >= MIN_VIEWERS
-                and not (App.detected.get(c["id"]) and time.monotonic() - App.detected[c["id"]]["at"] < DETECT_FRESH_S)]
+                if st.get("live") and (st.get("viewers") or 0) >= MIN_VIEWERS and c["id"] not in App.detected]
         todo.sort(key=lambda x: -(x[1].get("viewers") or 0))
         _preload["total"] = len(todo)
         import scorebug
