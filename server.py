@@ -202,8 +202,7 @@ async def state(request: Request):
                     "event": {"name": ev["name"], "time": ev.get("time"), "league": ev.get("league")} if ev else None,
                     "stream": stv.state if stv else "idle",
                     "message": stv.message if stv else ""})
-    return JSONResponse({"demo": config.DEMO, "telegram_error": App.tg_error, "channels": out,
-                         "cinema_url": config.CINEMA_URL or None})
+    return JSONResponse({"demo": config.DEMO, "telegram_error": App.tg_error, "channels": out})
 
 
 async def telegram_channels(request: Request):

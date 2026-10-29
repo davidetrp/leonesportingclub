@@ -30,5 +30,4 @@ PUBLIC = bool(DOMAIN)
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data")).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_PATH = DATA_DIR / "telegram"
-CINEMA_URL = os.environ.get("CINEMA_URL", "").strip()   # facoltativo: app da mostrare nella vista «Cinema»
 EVENTS_BOT = os.environ.get("EVENTS_BOT", "").strip().lstrip("@")   # facoltativo: bot con la lista "EVENTI IN PROGRAMMA"
