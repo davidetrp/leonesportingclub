@@ -4,3 +4,4 @@ __pycache__/
 tv/android/.gradle/
 tv/android/build/
 tv/android/app/build/
+data*/
