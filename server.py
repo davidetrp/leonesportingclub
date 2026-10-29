@@ -30,6 +30,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("server")
 
 MAX_CHANNELS = 60
+MAX_STREAMS = 3          # canali diversi in riproduzione contemporanea
 STATIC = config.BASE_DIR / "static"
 HLS_ROOT = config.DATA_DIR / "hls"
 SLOTS_FILE = config.DATA_DIR / "canali.json"
@@ -266,11 +267,15 @@ async def play(request: Request):
     if not config.DEMO and not App.live:
         return JSONResponse({"stream": "error", "message": App.tg_error}, status_code=503)
     s = streamer(cid)
-    if request.method == "POST":
-        # Un solo canale alla volta, come un telecomando: fermo gli altri (meno richieste a Telegram).
-        for other_id, other in list(App.streamers.items()):
-            if other_id != cid and other.running:
-                await other.stop()
+    if request.method == "POST" and not s.running:
+        # Più dispositivi possono guardare canali diversi (fino a MAX_STREAMS): oltre, chiudo quello
+        # che nessuno guarda da più tempo. Lo stesso canale su più dispositivi usa un solo download.
+        others = [o for o_id, o in App.streamers.items() if o_id != cid and o.running]
+        while len(others) >= MAX_STREAMS:
+            oldest = min(others, key=lambda o: o.last_access)
+            log.info("Troppi canali aperti: chiudo il canale %s (inattivo da più tempo)", oldest.slot)
+            await oldest.stop()
+            others.remove(oldest)
     if request.method == "POST" and s.state in ("idle", "offline", "error", "unsupported"):
         App.live_cache.pop(ch["peer_id"], None)
         s.start()

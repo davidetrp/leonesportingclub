@@ -19,7 +19,7 @@ from chunks import (CHUNK_MS, ChunkNotReady, NotLive, Resync, Unsupported,
 log = logging.getLogger("streamer")
 
 PLAYLIST_SIZE = 12       # segmenti nella playlist live
-IDLE_STOP_S = 45         # si ferma se nessuno guarda da 45 s
+IDLE_STOP_S = 25         # si ferma se nessuno guarda da 25 s (il lettore lo tiene vivo ogni 2 s)
 RESYNC_EVERY = 30        # ogni 30 chunk controlla di non essere rimasto indietro
 PREFETCH = 4             # pezzi scaricati in anticipo, in parallelo
 FIRST_CHUNK_WAIT_S = 12  # se il primo pezzo non arriva entro questo tempo, rientro nella diretta
