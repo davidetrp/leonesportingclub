@@ -115,5 +115,10 @@ public class MainActivity extends Activity {
         public void openSetup() {
             runOnUiThread(() -> web.loadUrl(SETUP + "?setup=1"));
         }
+
+        @JavascriptInterface
+        public void exit() {
+            runOnUiThread(() -> finish());
+        }
     }
 }

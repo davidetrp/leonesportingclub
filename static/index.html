@@ -183,16 +183,17 @@ footer { font-size: .82rem; color: var(--muted); }
    Sinistra: lista canali (su/giù). Destra: video grande e sotto le partite di oggi in riga. */
 .guide-link { text-decoration: none; }
 html.tv { font-size: 1.55vh; }
-body.tv { font-size: 1rem; height: 100vh; overflow: hidden; padding: 2.2vh 2.4vw; }
+html.tv, body.tv { height: 100vh; overflow: hidden; }
+body.tv { font-size: 1rem; padding: 2.2vh 2.4vw; }
 body.tv .page { max-width: none; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 1.6vh; }
 body.tv header h1 { font-size: 3.4vh; }
 body.tv .brand img { width: 5.6vh; height: 5.6vh; }
 body.tv .hint { font-size: 1.5vh; }
-body.tv .hint::after { content: " · su/giù scegli · OK apre · OK di nuovo schermo intero"; }
 body.tv .layout { display: grid; height: 100%; min-height: 0; gap: 1.6vh 1.8vw;
   grid-template-columns: 25vw minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas: "ghead monitor" "grid monitor" "grid rail"; }
 body.tv .main { display: contents; }
+body.tv .layout { align-items: stretch; }
 body.tv .grid-head { grid-area: ghead; }
 body.tv .grid-head h2 { font-size: 2.4vh; }
 body.tv .toggle { font-size: 1.5vh; padding: .7vh 1vw; }
@@ -288,6 +289,8 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
 #splash.gone { opacity: 0; visibility: hidden; pointer-events: none; }
 #spField { position: absolute; inset: 0; width: 100%; height: 100%; transition: opacity 1s ease, transform 1.6s cubic-bezier(.2, .7, .2, 1); }
 #splash.goal #spField { opacity: .28; transform: scale(1.08); }
+#spWorld { transition: opacity 1s ease; }
+#splash.goal #spWorld { opacity: .28; }
 .sp-vig { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 50%, transparent 35%, rgba(0, 0, 0, .85) 100%); }
 .sp-flash { position: absolute; inset: 0; background: radial-gradient(circle at 50% 46%, rgba(255, 220, 150, .55), transparent 55%); opacity: 0; pointer-events: none; }
 #splash.goal .sp-flash { animation: sp-flash .9s ease-out both; }
@@ -355,7 +358,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   var RUN0 = { x: 54.5, y: 47.5 }, KICK_AT = 760, LAND_AT = 2150;
   // Sulla TV disegno a risoluzione ridotta (il browser la ingrandisce): niente scatti sui processori lenti.
   var ONTV = /[?&]tv=1/.test(location.search) || /Web0S|webOS|NetCast|AFT[A-Z]|CanaliSportTV|SmartTV|BRAVIA|Tizen/i.test(navigator.userAgent);
-  var dpr = ONTV ? .55 : Math.min(window.devicePixelRatio || 1, 2), w = 0, h = 0, t0 = 0, trail = [], portrait = false;
+  var dpr = Math.min(window.devicePixelRatio || 1, 2), w = 0, h = 0, t0 = 0, trail = [], portrait = false;
 
   function size() { w = innerWidth; h = innerHeight; portrait = h > w * 1.1; cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
   size(); addEventListener("resize", size);
@@ -387,8 +390,9 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     var fit = portrait ? Math.min(w / (W + 10), h / (L + 12)) : Math.min(w / (L + 14), h / (W + 12));
     var k = easeInOut(clamp(t / 2600));
     var b = ballAt(t), focus = t < KICK_AT ? KICK : b;
-    return { z: fit * lerp(4.2, 1.22, k), x: lerp(focus.x, 61, k), y: lerp(focus.y, W / 2, k),
-             r: (portrait ? -Math.PI / 2 : 0) + lerp(-.42, -.06, k) + Math.sin(t / 900) * .012 };
+    // Alla fine la visuale è dritta: la rotazione e il leggero ondeggiare del drone vanno a zero.
+    return { z: fit * lerp(ONTV ? 2.6 : 4.2, 1.22, k), x: lerp(focus.x, 61, k), y: lerp(focus.y, W / 2, k),
+             r: (portrait ? -Math.PI / 2 : 0) + lerp(-.42, 0, k) + Math.sin(t / 900) * .012 * (1 - k) };
   }
 
   function pitch() {
@@ -463,6 +467,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   }
 
   var shown = false;
+  if (ONTV) { tvSplash(); return; }
   function frame(now) {
     if (!t0) t0 = now;
     var t = now - t0;
@@ -479,12 +484,55 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   }
   requestAnimationFrame(frame);
   setTimeout(function () { if (!shown) { shown = true; goal(); } }, GOAL_AT + 1500);   // se i frame si bloccano
+
+  // TV: il campo si disegna una volta sola su un'immagine; poi si spostano solo immagini (trasformazioni CSS,
+  // fatte dalla scheda video). Il processore della TV non ridisegna niente durante l'animazione.
+  function tvSplash() {
+    var S = 16, OX = 12, OY = 10;
+    function layer(wm, hm, scale, draw) {
+      var c = document.createElement("canvas"); c.width = Math.round(wm * scale); c.height = Math.round(hm * scale);
+      var saved = ctx; ctx = c.getContext("2d"); draw(scale); ctx = saved;
+      c.style.cssText = "position:absolute;left:0;top:0;will-change:transform;transform-origin:0 0";
+      return c;
+    }
+    var world = document.createElement("div"); world.id = "spWorld";
+    world.style.cssText = "position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform";
+    world.appendChild(layer(L + 2 * OX, W + 2 * OY, S, function (k) { ctx.setTransform(k, 0, 0, k, OX * k, OY * k); pitch(); net(0); }));
+    var BS = 48, PS = 32;                           // pixel per metro di pallone e giocatore
+    var ballEl = layer(2, 2, BS, function (k) { ctx.setTransform(k, 0, 0, k, (1 - KICK.x) * k, (1 - KICK.y) * k); ball(0); });
+    var playerEl = layer(4, 4, PS, function (k) { ctx.setTransform(k, 0, 0, k, (2 - RUN0.x) * k, (2 - RUN0.y) * k); player(0); });
+    var shadow = document.createElement("div");
+    shadow.style.cssText = "position:absolute;left:0;top:0;width:" + (.7 * S) + "px;height:" + (.6 * S) + "px;margin:" + (-.3 * S) + "px 0 0 " + (-.35 * S) + "px;border-radius:50%;background:rgba(0,0,0,.4);will-change:transform";
+    world.appendChild(shadow); world.appendChild(playerEl); world.appendChild(ballEl);
+    cv.style.display = "none"; sp.insertBefore(world, cv);
+    function tf(el, x, y, half, extra) {             // x, y in metri del campo; half = metà dell'immagine in pixel (il suo centro)
+      el.style.transform = "translate(" + ((x + OX) * S - half).toFixed(1) + "px," + ((y + OY) * S - half).toFixed(1) + "px)" + (extra || "");
+    }
+    var bScale = S / BS, pScale = S / PS;
+    function tick(now) {
+      if (!t0) t0 = now;
+      var t = now - t0;
+      if (sp.classList.contains("gone")) return;
+      var c = camera(t), b = ballAt(t), p = playerAt(t);
+      world.style.transform = "translate(" + (w / 2) + "px," + (h / 2) + "px) rotate(" + c.r.toFixed(4) + "rad) scale(" + (c.z / S).toFixed(4) + ") translate(" +
+        (-(c.x + OX) * S).toFixed(1) + "px," + (-(c.y + OY) * S).toFixed(1) + "px)";
+      tf(ballEl, b.x, b.y, BS, " scale(" + (bScale * (1 + b.z * 1.4)).toFixed(3) + ") rotate(" + b.spin.toFixed(2) + "rad)");
+      ballEl.style.transformOrigin = (BS) + "px " + (BS) + "px";
+      tf(shadow, b.x + b.z * 2.4, b.y + b.z * 1.6, 0, " scale(" + (1 + b.z * .5).toFixed(3) + ")");
+      tf(playerEl, p.x, p.y, 2 * PS, " scale(" + pScale + ")");
+      playerEl.style.transformOrigin = (2 * PS) + "px " + (2 * PS) + "px";
+      if (!shown && t >= GOAL_AT) { shown = true; goal(); }
+      if (t < 6000) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+    setTimeout(function () { if (!shown) { shown = true; goal(); } }, GOAL_AT + 1500);
+  }
 })();
 </script>
 <div class="page">
   <header>
     <h1 class="brand"><img src="/static/logo.svg" alt="" width="56" height="56"><span>Leone<small>Sporting Club</small></span></h1>
-    <div class="head-right"><a class="toggle guide-link" href="/guida">📺 Guida TV</a><button class="toggle" id="setBtn" type="button" aria-haspopup="dialog" aria-controls="sheet"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.6 7.6 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.6 7.6 0 0 0 1.7-1l2.4 1 2-3.4zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg> Impostazioni</button><span class="hint" id="topHint">Tasti 1–9 per cambiare canale</span></div>
+    <div class="head-right"><a class="toggle guide-link" href="/guida">📺 Guida TV</a><button class="toggle" id="setBtn" type="button" aria-haspopup="dialog" aria-controls="sheet"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.6 7.6 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.6 7.6 0 0 0 1.7-1l2.4 1 2-3.4zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg> Impostazioni</button><button class="toggle" id="exitBtn" type="button" hidden>Esci</button><span class="hint" id="topHint"></span></div>
   </header>
 
   <section class="box" id="loginCard" hidden>
@@ -711,7 +759,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
       canEdit = r.can_edit !== false;
       $("settings").hidden = !canEdit;
       $("app").hidden = false;
-      $("topHint").innerHTML = r.demo ? '<span class="demo-badge">Demo</span>' : "Tasti 1–9 per cambiare canale";
+      $("topHint").innerHTML = r.demo ? '<span class="demo-badge">Demo</span>' : "";
       if (r.telegram_error) $("foot").textContent = r.telegram_error;
       sortChannels(); renderGrid(); renderInfo();
     });
@@ -1179,8 +1227,33 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     tvFocused = el; el.classList.add("tvfocus");
     if (!el.hasAttribute("tabindex") && !/^(BUTTON|INPUT|SELECT|A|SUMMARY)$/.test(el.tagName)) el.tabIndex = -1;
     el.focus({ preventScroll: true });
-    el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    tvReveal(el);
   }
+  // Fa vedere l'elemento scorrendo solo il riquadro che lo contiene (lista canali, partite, impostazioni):
+  // la pagina resta ferma, così logo e parte alta non escono mai dallo schermo.
+  function tvReveal(el) {
+    var box = el.parentElement;
+    while (box && box !== document.body) {
+      var cs = getComputedStyle(box);
+      if (/(auto|scroll)/.test(cs.overflowY + " " + cs.overflowX) && (box.scrollHeight > box.clientHeight + 1 || box.scrollWidth > box.clientWidth + 1)) break;
+      box = box.parentElement;
+    }
+    if (box && box !== document.body) {
+      var a = el.getBoundingClientRect(), r = box.getBoundingClientRect(), pad = 12, dy = 0, dx = 0;
+      if (a.top < r.top + pad) dy = a.top - r.top - pad; else if (a.bottom > r.bottom - pad) dy = a.bottom - r.bottom + pad;
+      if (a.left < r.left + pad) dx = a.left - r.left - pad; else if (a.right > r.right - pad) dx = a.right - r.right + pad;
+      if (dx || dy) { try { box.scrollBy({ top: dy, left: dx, behavior: "smooth" }); } catch (e) { box.scrollTop += dy; box.scrollLeft += dx; } }
+    }
+    pinPage();
+  }
+  function pinPage() {
+    if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
+    var pg = document.querySelector(".page"); if (pg) pg.scrollTop = 0;
+  }
+  if (TV) document.addEventListener("scroll", function (e) {
+    if (e.target === document || e.target === document.body || e.target === document.documentElement || (e.target.classList && e.target.classList.contains("page"))) pinPage();
+  }, true);
   function tvMove(dir) {
     var list = focusables();
     if (!tvFocused || list.indexOf(tvFocused) === -1) { tvFocus(document.getElementById("ch-" + currentId) || list[0]); return; }
@@ -1272,6 +1345,18 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     if (window.CanaliTV && CanaliTV.openSetup) APP = "firetv";
   })();
   var settingsData = null;
+
+  // Tasto Esci: solo dentro le app per TV (nel browser non si può chiudere la pagina).
+  $("exitBtn").hidden = !(APP || window.PalmSystem);
+  $("exitBtn").addEventListener("click", function () {
+    if (window.CanaliTV && CanaliTV.exit) { CanaliTV.exit(); return; }
+    try { window.close(); } catch (e) {}
+    setTimeout(function () {                        // se la TV non ha chiuso l'app con window.close()
+      try { if (window.webOS && webOS.platformBack) { webOS.platformBack(); return; } } catch (e) {}
+      try { if (window.PalmSystem && PalmSystem.platformBack) { PalmSystem.platformBack(); return; } } catch (e) {}
+      $("exitBtn").textContent = "Usa il tasto Home";
+    }, 400);
+  });
 
   function setTheme(t) {
     if (t === "light") document.documentElement.dataset.theme = "light"; else delete document.documentElement.dataset.theme;
