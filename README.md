@@ -1,4 +1,4 @@
-# Canali Sport
+# Leone Sporting Club
 
 App con tutti i canali che vuoi (ordinati per spettatori, con preferiti e partite del giorno) che mostra **dentro l'app** le dirette dei tuoi canali Telegram privati, senza aprire Telegram.
 

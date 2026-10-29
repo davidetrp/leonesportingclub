@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Canali Sport</title>
+<title>Leone Sporting Club</title>
 <meta name="theme-color" content="#0b1018">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Canali Sport">
+<meta name="apple-mobile-web-app-title" content="Leone SC">
 <link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icon-512.png">
@@ -19,7 +19,7 @@
 /* Layout: today's fixtures in a left rail (stacks below on phones), broadcast monitor + channel grid on the right */
 :root {
   --bg: #eef1f5; --panel: #ffffff; --ink: #121a26; --muted: #5b6676; --line: #d5dbe4;
-  --accent: #d6411f; --accent-ink: #ffffff; --live: #e0262f; --star: #c98a00;
+  --accent: #d6411f; --accent-ink: #ffffff; --live: #e0262f; --star: #c98a00; --gold: #b67a00;
   --screen: #0f1722; --screen-ink: #eef3fa; --screen-muted: #8c9bb0;
   --ok: #1d7a4a; --warn: #a55a00;
   --font-display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", sans-serif;
@@ -29,7 +29,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0b1018; --panel: #141c28; --ink: #e8edf4; --muted: #92a0b3; --line: #253144;
-    --accent: #ff6a3d; --accent-ink: #1a0b05; --live: #ff4a52; --star: #ffc53d; --screen: #05080d; --screen-ink: #eef3fa;
+    --accent: #ff6a3d; --accent-ink: #1a0b05; --live: #ff4a52; --star: #ffc53d; --gold: #f5b83d; --screen: #05080d; --screen-ink: #eef3fa;
     --screen-muted: #7f8ea3; --ok: #4fc68a; --warn: #f0a640; color-scheme: dark;
   }
 }
@@ -47,6 +47,10 @@ body {
 .page { max-width: 1240px; margin: 0 auto; display: grid; gap: 22px; }
 header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 h1 { font-family: var(--font-display); font-weight: 900; font-size: 2.3rem; letter-spacing: .02em; text-transform: uppercase; margin: 0; line-height: 1; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand img { width: 56px; height: 56px; flex: none; }
+.brand span { display: grid; line-height: .9; color: var(--gold); }
+.brand small { font-size: .5em; font-weight: 800; letter-spacing: .14em; color: var(--ink); margin-top: 4px; }
 .head-right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .hint { color: var(--muted); font-size: .85rem; }
 .demo-badge { font-family: var(--font-display); font-weight: 800; letter-spacing: .12em; font-size: .75rem; padding: 2px 8px; border-radius: 4px; background: var(--warn); color: var(--panel); }
@@ -197,7 +201,7 @@ body.theater .ctrl { display: none !important; }
 <body>
 <div class="page">
   <header>
-    <h1>Canali Sport</h1>
+    <h1 class="brand"><img src="/static/logo.svg" alt="" width="56" height="56"><span>Leone<small>Sporting Club</small></span></h1>
     <div class="head-right"><span class="hint" id="topHint">Tasti 1–9 per cambiare canale</span></div>
   </header>
 

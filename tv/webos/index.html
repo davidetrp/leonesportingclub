@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Canali Sport</title>
+<title>Leone Sporting Club</title>
 <style>
   /* Schermata iniziale dell'app TV: indirizzo del server, da compilare una volta col telecomando */
   :root { --bg: #0b1018; --panel: #141c28; --ink: #e8edf4; --muted: #92a0b3; --line: #253144; --accent: #ff6a3d; --bad: #f0a640; color-scheme: dark; }
@@ -13,6 +13,9 @@
          display: grid; place-items: center; padding: 48px; }
   main { width: min(1100px, 100%); display: grid; gap: 28px; }
   h1 { font-size: 64px; letter-spacing: .03em; text-transform: uppercase; margin: 0; font-weight: 900; }
+  .brand { display: flex; align-items: center; gap: 24px; }
+  .brand span { display: grid; line-height: .95; color: #f5b83d; }
+  .brand small { font-size: .45em; letter-spacing: .14em; color: var(--ink); margin-top: 6px; }
   p { margin: 0; color: var(--muted); line-height: 1.4; }
   label { display: grid; gap: 10px; font-size: 22px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
   input { font: inherit; font-size: 34px; padding: 18px 22px; border-radius: 12px; border: 2px solid var(--line); background: var(--panel); color: var(--ink); width: 100%; }
@@ -28,12 +31,12 @@
 </head>
 <body>
 <main>
-  <h1>Canali Sport</h1>
+  <h1 class="brand"><img src="logo.svg" alt="" width="110" height="110"><span>Leone<small>Sporting Club</small></span></h1>
   <p>Scrivi l'indirizzo del tuo server, lo stesso che apri dal telefono. Lo chiedo solo la prima volta.</p>
   <label for="url">Indirizzo del server
     <input id="url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="http://192.168.1.20:8080">
   </label>
-  <p class="examples">Esempi: <code>http://192.168.1.20:8080</code> (Mac in casa) · <code>https://leonesport.duckdns.org</code> (server online)</p>
+  <p class="examples">Esempi: <code>http://192.168.1.20:8080</code> (Mac in casa) · <code>https://leonesportingclub.tuarete.ts.net</code> (anche fuori casa)</p>
   <div class="row">
     <button id="go" type="button">Collega</button>
     <button id="reset" class="ghost" type="button">Cancella</button>
@@ -54,6 +57,11 @@
     return v;
   }
   function go(v) { location.href = v + "/?tv=1"; }
+  // Installata dal server: la TV ci passa già l'indirizzo del server nei parametri di avvio.
+  try {
+    var lp = window.PalmSystem && PalmSystem.launchParams ? JSON.parse(PalmSystem.launchParams) : {};
+    if (lp && lp.server) save(normalize(lp.server));
+  } catch (e) {}
   var saved = load();
   var m = q.match(/[?&]err=([^&]*)/);
   if (m) $("err").textContent = "Non riesco ad aprire " + (saved || "il server") + ": " + decodeURIComponent(m[1]) + ". Controlla l'indirizzo e che il server sia acceso.";
