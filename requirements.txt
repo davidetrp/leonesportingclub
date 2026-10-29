@@ -3,4 +3,4 @@ starlette>=0.37
 uvicorn>=0.29
 tzdata>=2024.1
 certifi>=2024.2.2
-paramiko>=3.4
+paramiko>=3.4,<4    # dalla 4 in poi mancano ssh-dss e ssh-rsa (SHA-1), che usa il server SSH delle TV LG

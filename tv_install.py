@@ -79,6 +79,9 @@ def install(tv_ip: str, passphrase: str, steps: list[str]) -> dict:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     if last is not None:
+        if "host key" in str(last) and int(paramiko.__version__.split(".")[0]) >= 4:
+            raise InstallError(f"Collegamento alla TV non riuscito: paramiko {paramiko.__version__} è troppo nuovo per la TV. "
+                               "Riavvia il server: installa da solo la versione 3.") from last
         raise InstallError(f"Collegamento alla TV non riuscito: {last}")
 
     try:
