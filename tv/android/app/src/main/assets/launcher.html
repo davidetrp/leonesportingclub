@@ -26,6 +26,11 @@
   button.ghost { background: transparent; color: var(--ink); border: 2px solid var(--line); }
   .err { color: var(--bad); min-height: 1.4em; }
   .examples { font-size: 22px; }
+  /* Mentre si collega in automatico: solo il logo animato */
+  body.auto main { display: none; }
+  body.auto::before { content: ""; width: 34vh; height: 34vh; background: url(logo.svg) center / contain no-repeat;
+    animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { transform: scale(1.06); opacity: .85; } }
   code { color: var(--ink); }
 </style>
 </head>
@@ -46,6 +51,9 @@
 <script>
 (function () {
   var KEY = "cs-server";
+  // Server di Leone Sporting Club: l'app si collega da sola, senza chiedere niente.
+  // (Il tasto Menu ≡ sul Fire TV o un errore di collegamento riaprono questa schermata.)
+  var DEFAULT_SERVER = "https://leone.onca-adelie.ts.net";
   var $ = function (id) { return document.getElementById(id); };
   var q = location.search;
   function load() { try { return localStorage.getItem(KEY) || ""; } catch (e) { return ""; } }
@@ -62,11 +70,11 @@
     var lp = window.PalmSystem && PalmSystem.launchParams ? JSON.parse(PalmSystem.launchParams) : {};
     if (lp && lp.server) save(normalize(lp.server));
   } catch (e) {}
-  var saved = load();
+  var saved = load() || DEFAULT_SERVER;
   var m = q.match(/[?&]err=([^&]*)/);
   if (m) $("err").textContent = "Non riesco ad aprire " + (saved || "il server") + ": " + decodeURIComponent(m[1]) + ". Controlla l'indirizzo e che il server sia acceso.";
   $("url").value = saved;
-  if (saved && !/[?&](setup|err)=/.test(q)) { go(saved); return; }
+  if (saved && !/[?&](setup|err)=/.test(q)) { document.body.classList.add("auto"); go(saved); return; }
   $("go").addEventListener("click", function () {
     var v = normalize($("url").value);
     if (!v) { $("err").textContent = "Scrivi l'indirizzo del server."; return; }

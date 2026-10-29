@@ -155,8 +155,24 @@ MAX_FAILS, FAIL_WINDOW_S = 5, 15 * 60
 
 def client_ip(request: Request) -> str:
     # Dietro Caddy l'IP vero arriva in X-Forwarded-For; il server non è esposto direttamente.
+    # Uso l'ultimo indirizzo, quello aggiunto dal proxy più vicino (Funnel di Tailscale o Caddy):
+    # i precedenti li può scrivere chiunque.
     fwd = request.headers.get("x-forwarded-for", "")
-    return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?")
+    return fwd.split(",")[-1].strip() if fwd else (request.client.host if request.client else "?")
+
+
+def is_home(request: Request) -> bool:
+    """True se la richiesta arriva dalla rete di casa o dal Mac stesso (non da internet tramite il Funnel)."""
+    import ipaddress
+    try:
+        return not ipaddress.ip_address(client_ip(request)).is_global
+    except ValueError:
+        return False
+
+
+def need_home():
+    return JSONResponse({"error": "Le modifiche si fanno solo da casa, con il telefono sulla stessa rete Wi-Fi del Mac."},
+                        status_code=403)
 
 
 def is_https(request: Request) -> bool:
@@ -202,12 +218,15 @@ async def state(request: Request):
                     "event": {"name": ev["name"], "time": ev.get("time"), "league": ev.get("league")} if ev else None,
                     "stream": stv.state if stv else "idle",
                     "message": stv.message if stv else ""})
-    return JSONResponse({"demo": config.DEMO, "telegram_error": App.tg_error, "channels": out})
+    return JSONResponse({"demo": config.DEMO, "telegram_error": App.tg_error, "channels": out,
+                         "can_edit": is_home(request)})
 
 
 async def telegram_channels(request: Request):
     if not is_authed(request):
         return need_auth()
+    if not is_home(request):
+        return need_home()
     if config.DEMO:
         return JSONResponse({"channels": [{"peer_id": -(i + 1), "title": f"Demo {i + 1}", "kind": "demo"}
                                           for i in range(8)]})
@@ -224,6 +243,8 @@ def _clean(body: dict) -> tuple[str, int | None]:
 async def add_channel(request: Request):
     if not is_authed(request):
         return need_auth()
+    if not is_home(request):
+        return need_home()
     name, peer = _clean(await request.json())
     if peer is None:
         return JSONResponse({"error": "Scegli un canale Telegram."}, status_code=400)
@@ -239,6 +260,8 @@ async def add_channel(request: Request):
 async def edit_channel(request: Request):
     if not is_authed(request):
         return need_auth()
+    if not is_home(request):
+        return need_home()
     cid = int(request.path_params["cid"])
     channels = load_channels()
     ch = next((c for c in channels if c["id"] == cid), None)
@@ -347,6 +370,8 @@ async def unlock_events(request: Request):
     """Avvia lo sblocco in sottofondo (POST) e ne restituisce l'avanzamento (GET). Parte solo da un tocco nell'app."""
     if not is_authed(request):
         return need_auth()
+    if request.method == "POST" and not is_home(request):
+        return need_home()
     if config.DEMO:
         return await _demo_unlock(request)
     if not App.events:
@@ -391,6 +416,8 @@ async def watch_event(request: Request):
     """Collega la partita a un canale: se serve entra nel canale (solo con join=true) e lo aggiunge all'elenco."""
     if not is_authed(request):
         return need_auth()
+    if not is_home(request):
+        return need_home()
     body = await request.json()
     evs = await get_events()
     i = int(body.get("index", -1))
@@ -444,9 +471,7 @@ async def hls(request: Request):
 async def lifespan(_app):
     HLS_ROOT.mkdir(parents=True, exist_ok=True)
     if not config.APP_PASSWORD:
-        if config.PUBLIC:
-            raise SystemExit("APP_PASSWORD è obbligatoria quando il sito è online. Impostala in .env.")
-        log.warning("APP_PASSWORD vuota: chiunque raggiunga il server può usarlo. Impostala in .env!")
+        log.info("Nessuna password: il sito si apre direttamente. Le modifiche ai canali si fanno solo da casa.")
     if config.DEMO:
         log.info("Modalità DEMO: canali di prova, nessun collegamento a Telegram.")
     else:
@@ -501,6 +526,8 @@ async def lg_install(request: Request):
     """Installa l'app sulla TV LG (POST con ip e passphrase) e ne restituisce l'avanzamento (GET)."""
     if not is_authed(request):
         return need_auth()
+    if request.method == "POST" and not is_home(request):
+        return need_home()
     if request.method == "POST" and not _lg["running"]:
         body = await request.json()
         ip = str(body.get("ip") or "").strip()

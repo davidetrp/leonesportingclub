@@ -178,28 +178,102 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); ou
 footer { font-size: .82rem; color: var(--muted); }
 @media (max-width: 420px) { h1 { font-size: 1.9rem; } .num { font-size: 2.8rem; } .chan-name { font-size: 1.3rem; } .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (prefers-reduced-motion: reduce) { .bar::after { animation: none; width: 100%; } }
-/* ---- Modalità TV (Fire TV, LG webOS): telecomando, focus grande, video a tutto schermo ---- */
-body.tv { font-size: 20px; }
-body.tv .page { max-width: none; }
-body.tv .layout { grid-template-columns: 380px minmax(0, 1fr); }
-body.tv .rail { order: 0; position: sticky; top: 20px; max-height: calc(100vh - 60px); overflow-y: auto; }
-body.tv .grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-body.tv .star, body.tv footer, body.tv .guide-link { display: none; }
+/* ---- Modalità TV (Fire TV, LG webOS): una sola schermata senza scorrere, misure in vh così niente zoom ----
+   Sinistra: lista canali (su/giù). Destra: video grande e sotto le partite di oggi in riga. */
 .guide-link { text-decoration: none; }
-body.tv:not(.theater) .screen { aspect-ratio: auto; height: 52vh; }
-body.tv { padding-top: 28px; }
-body.tv .hint::after { content: " · OK apre · OK di nuovo = schermo intero · Indietro esce"; }
+html.tv { font-size: 1.55vh; }
+body.tv { font-size: 1rem; height: 100vh; overflow: hidden; padding: 2.2vh 2.4vw; }
+body.tv .page { max-width: none; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 1.6vh; }
+body.tv header h1 { font-size: 3.4vh; }
+body.tv .brand img { width: 5.6vh; height: 5.6vh; }
+body.tv .hint { font-size: 1.5vh; }
+body.tv .hint::after { content: " · su/giù scegli · OK apre · OK di nuovo schermo intero"; }
+body.tv .layout { display: grid; height: 100%; min-height: 0; gap: 1.6vh 1.8vw;
+  grid-template-columns: 25vw minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "ghead monitor" "grid monitor" "grid rail"; }
+body.tv .main { display: contents; }
+body.tv .grid-head { grid-area: ghead; }
+body.tv .grid-head h2 { font-size: 2.4vh; }
+body.tv .toggle { font-size: 1.5vh; padding: .7vh 1vw; }
+body.tv .grid { grid-area: grid; grid-template-columns: 1fr; gap: .9vh; overflow-y: auto; min-height: 0;
+  align-content: start; padding: .6vh .5vw; scroll-padding: 2vh; scrollbar-width: none; }
+body.tv .grid::-webkit-scrollbar { display: none; }
+body.tv .card { grid-template-columns: 4.6vh minmax(0, 1fr) auto; grid-template-areas: "k s st" "k ev st";
+  align-items: center; gap: .2vh 1vw; padding: 1.2vh 1vw; border-radius: 1.2vh; }
+body.tv .card .k { grid-area: k; font-size: 3.6vh; }
+body.tv .card .s { grid-area: s; font-size: 2.1vh; padding-right: 0; }
+body.tv .card .ev { grid-area: ev; font-size: 1.5vh; }
+body.tv .card .st { grid-area: st; font-size: 1.6vh; }
+body.tv .card.add, body.tv .star, body.tv #settings, body.tv #lgBox, body.tv footer, body.tv .guide-link { display: none !important; }
+body.tv .monitor { grid-area: monitor; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; border-radius: 1.4vh; }
+body.tv:not(.theater) .screen { aspect-ratio: auto; height: auto; min-height: 0; }
+body.tv .info { padding: 1.2vh 1.4vw 1.4vh; gap: 1.2vw; }
+body.tv .num { font-size: 5vh; }
+body.tv .chan-name { font-size: 3vh; }
+body.tv .chan-src { font-size: 1.6vh; }
+body.tv .overlay .big-num { font-size: 9vh; }
+body.tv .overlay .msg { font-size: 2.2vh; }
+body.tv .overlay .sub { font-size: 1.6vh; }
+body.tv .rail { grid-area: rail; position: static; max-height: none; overflow: visible; display: block; }
+body.tv #evCard { display: none !important; }
+body.tv .rail-card { display: grid; grid-template-columns: auto minmax(0, 1fr); border-radius: 1.2vh; }
+body.tv .rail-head { border-bottom: 0; border-right: 1px solid var(--line); padding: 1.2vh 1.2vw; align-content: center; }
+body.tv .rail-head h2 { font-size: 2vh; }
+body.tv .rail-head .date { font-size: 1.4vh; }
+body.tv .fixtures { display: flex; overflow-x: auto; max-height: none; padding: 0; scroll-padding: 1vw; scrollbar-width: none; }
+body.tv .fixtures::-webkit-scrollbar { display: none; }
+body.tv .fx { flex: 0 0 15vw; border-bottom: 0; border-right: 1px solid var(--line); padding: 1.1vh 1vw; grid-template-columns: 4.2vw minmax(0, 1fr); gap: .6vw; }
+body.tv .fx-time { font-size: 2vh; }
+body.tv .fx-league { font-size: 1.1vh; }
+body.tv .fx-team { font-size: 1.5vh; }
+body.tv .rail-empty { font-size: 1.5vh; padding: 1.5vh 1.2vw; }
 body.tv :focus { outline: none; }
-body.tv .tvfocus { outline: 4px solid var(--accent) !important; outline-offset: 4px; transform: scale(1.03); }
-@media (prefers-reduced-motion: reduce) { body.tv .tvfocus { transform: none; } }
+body.tv .tvfocus { outline: .45vh solid var(--accent) !important; outline-offset: .2vh; }
+body.tv .card.tvfocus { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
 body.theater .monitor { position: fixed; inset: 0; z-index: 50; border-radius: 0; }
 body.theater .screen { aspect-ratio: auto; height: 100vh; }
 body.theater .info { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(transparent, rgba(0,0,0,.75)); transition: opacity .4s; }
 body.theater.calm .info, body.theater.calm .ctrl { opacity: 0; }
 body.theater .ctrl { display: none !important; }
+/* ---- Splash d'apertura con il logo ---- */
+#splash { position: fixed; inset: 0; z-index: 200; display: grid; place-content: center; justify-items: center; gap: 2.6vh;
+  background: radial-gradient(circle at 50% 42%, #1c2a40 0, #0b1018 62%); color: #eef3fa; transition: opacity .6s ease, visibility .6s; }
+#splash.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+.sp-logo { width: min(30vh, 46vw); height: auto; animation: sp-in .9s cubic-bezier(.2, .9, .3, 1.25) both; filter: drop-shadow(0 1.6vh 3vh rgba(255, 106, 61, .25)); }
+.sp-mane { transform-box: fill-box; transform-origin: center; animation: sp-spin 9s linear infinite; }
+.sp-glow { position: absolute; width: min(56vh, 90vw); aspect-ratio: 1; border-radius: 50%; top: 50%; left: 50%; translate: -50% -62%;
+  background: radial-gradient(circle, rgba(245, 184, 61, .22), transparent 62%); animation: sp-pulse 2.2s ease-in-out infinite; }
+.sp-word { font-family: var(--font-display); font-weight: 900; font-size: min(7.5vh, 12vw); line-height: .9; text-transform: uppercase;
+  color: #f5b83d; display: grid; justify-items: center; animation: sp-up .7s .3s both; letter-spacing: .03em; }
+.sp-word small { font-size: .36em; letter-spacing: .3em; color: #eef3fa; margin-top: .6vh; }
+.sp-bar { width: min(22vh, 40vw); height: .5vh; min-height: 3px; border-radius: 99px; background: rgba(255, 255, 255, .1); overflow: hidden; animation: sp-up .6s .5s both; }
+.sp-bar::after { content: ""; display: block; height: 100%; width: 40%; border-radius: inherit; background: #ff6a3d; animation: sp-load 1.1s ease-in-out infinite alternate; }
+@keyframes sp-in { from { opacity: 0; transform: scale(.6) rotate(-8deg); } to { opacity: 1; transform: none; } }
+@keyframes sp-up { from { opacity: 0; transform: translateY(2vh); } to { opacity: 1; transform: none; } }
+@keyframes sp-spin { to { transform: rotate(360deg); } }
+@keyframes sp-pulse { 50% { opacity: .55; scale: 1.08; } }
+@keyframes sp-load { from { transform: translateX(-20%); } to { transform: translateX(170%); } }
+@media (prefers-reduced-motion: reduce) { #splash *, #splash *::after { animation: none !important; } }
 </style>
 </head>
 <body>
+<div id="splash" aria-hidden="true">
+  <div class="sp-glow"></div>
+  <svg class="sp-logo" viewBox="0 0 512 512"><path d="M256 34 L446 96 V246 C446 362 364 446 256 482 C148 446 66 362 66 246 V96 Z" fill="#141c28" stroke="#f5b83d" stroke-width="16" stroke-linejoin="round"/>
+  <polygon class="sp-mane" points="256.0,112.0 280.9,152.8 321.1,126.9 325.8,174.4 373.3,168.5 356.9,213.4 402.2,228.6 368.0,262.0 402.2,295.4 356.9,310.6 373.3,355.5 325.8,349.6 321.1,397.1 280.9,371.2 256.0,412.0 231.1,371.2 190.9,397.1 186.2,349.6 138.7,355.5 155.1,310.6 109.8,295.4 144.0,262.0 109.8,228.6 155.1,213.4 138.7,168.5 186.2,174.4 190.9,126.9 231.1,152.8" fill="#ff6a3d"/>
+  <circle cx="256" cy="262" r="104" fill="#e24a22"/>
+  <polygon points="196,178 214,138 236,170" fill="#f5b83d"/>
+  <polygon points="316,178 298,138 276,170" fill="#f5b83d"/>
+  <path d="M256 162 L322 196 L334 262 L304 326 L256 352 L208 326 L178 262 L190 196 Z" fill="#f5b83d"/>
+  <path d="M256 262 L292 290 L282 326 L256 340 L230 326 L220 290 Z" fill="#fbe3a6"/>
+  <polygon points="212,236 244,246 214,252" fill="#0f1722"/>
+  <polygon points="300,236 268,246 298,252" fill="#0f1722"/>
+  <polygon points="240,276 272,276 256,296" fill="#0f1722"/>
+  <path d="M256 296 L256 312 M256 312 Q244 324 234 316 M256 312 Q268 324 278 316" stroke="#0f1722" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <path d="M256 170 L256 236" stroke="#d99a1e" stroke-width="5" stroke-linecap="round"/></svg>
+  <div class="sp-word">Leone<small>Sporting Club</small></div>
+  <div class="sp-bar"></div>
+</div>
 <div class="page">
   <header>
     <h1 class="brand"><img src="/static/logo.svg" alt="" width="56" height="56"><span>Leone<small>Sporting Club</small></span></h1>
@@ -315,6 +389,12 @@ body.theater .ctrl { display: none !important; }
   var editing = null;         // null = canale selezionato, "new" = nuovo canale
   var hls = null, playing = false, statusTimer = null, tuneToken = 0, tgChannels = null, delArmed = false;
   var nameTouched = false;    // true se il nome è stato scritto a mano
+  var canEdit = true;         // false quando apri il sito da fuori casa: niente modifiche ai canali
+  var splashT0 = Date.now();
+  function hideSplash() {
+    setTimeout(function () { var sp = $("splash"); if (sp) sp.classList.add("gone"); }, Math.max(0, 1400 - (Date.now() - splashT0)));
+  }
+  setTimeout(hideSplash, 6000);
 
   function store(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
   function load(k, d) { try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
@@ -333,7 +413,7 @@ body.theater .ctrl { display: none !important; }
   }
 
   // ---------------------------------------------------------------- login
-  function showLogin() { $("app").hidden = true; $("loginCard").hidden = false; $("pw").focus(); }
+  function showLogin() { hideSplash(); $("app").hidden = true; $("loginCard").hidden = false; $("pw").focus(); }
   $("loginForm").addEventListener("submit", function (e) {
     e.preventDefault(); $("loginErr").textContent = "";
     api("/api/login", { method: "POST", body: { password: $("pw").value } }).then(function (r) {
@@ -361,6 +441,9 @@ body.theater .ctrl { display: none !important; }
   function refresh() {
     return api("/api/state").then(function (r) {
       channels = r.channels || [];
+      canEdit = r.can_edit !== false;
+      $("settings").hidden = !canEdit;
+      $("lgBox").hidden = !canEdit;
       $("app").hidden = false;
       $("topHint").innerHTML = r.demo ? '<span class="demo-badge">Demo</span>' : "Tasti 1–9 per cambiare canale";
       if (r.telegram_error) $("foot").textContent = r.telegram_error;
@@ -394,11 +477,13 @@ body.theater .ctrl { display: none !important; }
       card.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tune(c.id); } });
       grid.appendChild(card);
     });
-    var add = document.createElement("button");
-    add.type = "button"; add.className = "card add"; add.id = "addCard";
-    add.innerHTML = '<span class="plus">+</span><span>Aggiungi canale</span>';
-    add.addEventListener("click", openNew);
-    grid.appendChild(add);
+    if (canEdit) {
+      var add = document.createElement("button");
+      add.type = "button"; add.className = "card add"; add.id = "addCard";
+      add.innerHTML = '<span class="plus">+</span><span>Aggiungi canale</span>';
+      add.addEventListener("click", openNew);
+      grid.appendChild(add);
+    }
     if (TV && tvFocused && !document.body.contains(tvFocused)) {
       var again = tvFocused.id ? document.getElementById(tvFocused.id) : null;
       tvFocused = null;
@@ -770,7 +855,7 @@ body.theater .ctrl { display: none !important; }
   // ---------------------------------------------------------------- TV (telecomando)
   var TV = /[?&]tv=1/.test(location.search) || /Web0S|webOS|NetCast|AFT[A-Z]|CanaliSportTV|SmartTV|BRAVIA|Tizen/i.test(navigator.userAgent);
   try { if (TV) sessionStorage.setItem("cs-tv", "1"); else if (sessionStorage.getItem("cs-tv") === "1") TV = true; } catch (e) {}
-  if (TV) document.body.classList.add("tv");
+  if (TV) { document.body.classList.add("tv"); document.documentElement.classList.add("tv"); }
   if (window.CanaliTV && CanaliTV.openSetup) {          // app Fire TV: tasto per cambiare server
     var cs = document.createElement("button");
     cs.type = "button"; cs.className = "toggle"; cs.textContent = "Cambia server";
@@ -875,7 +960,9 @@ body.theater .ctrl { display: none !important; }
       if (!byId(currentId)) currentId = order.length ? order[0].id : null;
       if (currentId) tune(currentId);
       else { overlay("Nessun canale", "Tocca + per aggiungere il primo canale."); fillForm(); }
-    }).catch(function () {});
+      if (TV) tvFocus(document.getElementById("ch-" + currentId) || document.querySelector(".card"));
+      hideSplash();
+    }).catch(function () { hideSplash(); });
     loadFixtures(); loadEvents();
     setInterval(function () { refresh().catch(function () {}); }, 20000);
     setInterval(function () { loadEvents(); }, 90000);
