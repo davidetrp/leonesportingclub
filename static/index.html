@@ -103,6 +103,7 @@ h1 { font-family: var(--font-display); font-weight: 900; font-size: 2.3rem; lett
 .manual p { margin: 0; font-size: .82rem; color: var(--muted); }
 .manual a { justify-self: start; }
 .card .ev { font-size: .78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .s.is-match { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.2; }
 
 /* Monitor */
 .monitor { background: var(--screen); color: var(--screen-ink); border-radius: 14px; overflow: hidden; }
@@ -562,7 +563,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
         </form>
       </details>
 
-      <footer id="foot">I canali sono ordinati per spettatori e si aggiornano ogni 20 secondi. Con ★ fissi in cima quelli che preferisci, su questo dispositivo.</footer>
+      <footer id="foot">I canali sono ordinati per spettatori e si aggiornano ogni 20 secondi. Quando riesce, il nome della partita viene letto dal video (in alto a sinistra) e il nome del canale Telegram resta sotto. Con ★ fissi in cima quelli che preferisci, su questo dispositivo.</footer>
     </div>
   </div>
 </div>
@@ -721,12 +722,19 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
       var card = document.createElement("div");
       card.className = "card"; card.id = "ch-" + c.id; card.tabIndex = 0; card.setAttribute("role", "button");
       card.setAttribute("aria-pressed", String(c.id === currentId));
-      card.setAttribute("aria-label", (i + 1) + ". " + label(c) + (live ? ", in diretta, " + fmtViewers(c.viewers) + " spettatori" : ", non in diretta"));
+      card.setAttribute("aria-label", (i + 1) + ". " + (c.match && live ? c.match.title + ", canale " : "") + label(c) + (live ? ", in diretta, " + fmtViewers(c.viewers) + " spettatori" : ", non in diretta"));
       card.innerHTML = '<span class="k"></span><span class="s"></span><span class="ev" hidden></span><span class="st"><span class="dot"></span><span class="t"></span></span>' +
         '<button class="star" type="button"></button>';
       card.querySelector(".k").textContent = i + 1;
-      card.querySelector(".s").textContent = label(c);
-      if (c.event) { var evEl = card.querySelector(".ev"); evEl.hidden = false; evEl.textContent = "⚽ " + c.event.name + (c.event.time ? " · " + c.event.time : ""); }
+      var evEl = card.querySelector(".ev");
+      if (c.match && live) {                       // nome della partita letto nel video, il canale Telegram sotto
+        card.querySelector(".s").textContent = c.match.title + (c.match.score ? "  " + c.match.score : "");
+        card.querySelector(".s").classList.add("is-match");
+        evEl.hidden = false; evEl.textContent = "📡 " + label(c);
+      } else {
+        card.querySelector(".s").textContent = label(c);
+        if (c.event) { evEl.hidden = false; evEl.textContent = "⚽ " + c.event.name + (c.event.time ? " · " + c.event.time : ""); }
+      }
       var st = card.querySelector(".st");
       if (live) { st.classList.add("live"); st.querySelector(".t").textContent = "Live · " + fmtViewers(c.viewers) + " 👁"; }
       else st.querySelector(".t").textContent = c.live === false ? "Offline" : "Stato non disponibile";
@@ -772,9 +780,11 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     $("num").textContent = pos;
     $("ovNum").textContent = pos;
     $("bugCh").textContent = "CH " + pos;
-    $("chanName").textContent = c ? label(c) : "Nessun canale";
+    var m = c && c.live === true ? c.match : null;
+    $("chanName").textContent = m ? m.title + (m.score ? "  " + m.score : "") : c ? label(c) : "Nessun canale";
     var src = "Aggiungi un canale con il tasto +";
-    if (c && c.event) src = "⚽ " + c.event.name + (c.event.time ? " · " + c.event.time : "") + (c.live === true ? " · " + fmtViewers(c.viewers) + " spettatori" : " · non ancora in diretta");
+    if (m) src = "📡 Canale Telegram: " + label(c) + (m.league ? " · " + m.league : "") + " · " + fmtViewers(c.viewers) + " spettatori";
+    else if (c && c.event) src = "⚽ " + c.event.name + (c.event.time ? " · " + c.event.time : "") + (c.live === true ? " · " + fmtViewers(c.viewers) + " spettatori" : " · non ancora in diretta");
     else if (c) src = c.live === true ? "In diretta" + (c.title ? " · " + c.title : "") + " · " + fmtViewers(c.viewers) + " spettatori"
       : c.live === false ? "Nessuna diretta in questo momento" : "Stato non disponibile";
     $("chanSrc").textContent = src;

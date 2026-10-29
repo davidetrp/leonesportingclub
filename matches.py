@@ -98,6 +98,8 @@ def parse_events(data: dict, league: str, priority: int, day) -> list[dict]:
             "time": local.strftime("%H:%M"),
             "home": (home.get("team") or {}).get("shortDisplayName") or (home.get("team") or {}).get("displayName", "?"),
             "away": (away.get("team") or {}).get("shortDisplayName") or (away.get("team") or {}).get("displayName", "?"),
+            "home_alt": [x for x in ((home.get("team") or {}).get(k) for k in ("abbreviation", "displayName", "name", "location")) if x],
+            "away_alt": [x for x in ((away.get("team") or {}).get(k) for k in ("abbreviation", "displayName", "name", "location")) if x],
             "home_score": home.get("score") if state != "pre" else None,
             "away_score": away.get("score") if state != "pre" else None,
             "state": state,

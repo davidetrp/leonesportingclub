@@ -10,6 +10,7 @@ import hmac
 import json
 import logging
 import secrets
+import shutil
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -51,6 +52,9 @@ class App:
     events_error = ""
     unlock_task = None
     me = None              # utente Telegram collegato
+    detected: dict[int, dict] = {}     # partita letta nel video: {cid: {title, score, league, at}}
+    last_seen = 0.0                    # ultima volta che qualcuno ha aperto l'app
+    snapshot = None                    # (peer_id, task) del fotogramma in corso
     login = AccountLogin()
     demo_account = {"name": "Account demo", "username": "leone_demo", "phone": "393331234567"}
 
@@ -208,6 +212,7 @@ async def state(request: Request):
     if not is_authed(request):
         return need_auth()
     channels = load_channels()
+    App.last_seen = time.monotonic()
     async def events_or_empty():
         try:
             return await asyncio.wait_for(get_events(), timeout=8)
@@ -219,7 +224,9 @@ async def state(request: Request):
     for c, st in zip(channels, statuses):
         stv = App.streamers.get(c["id"])
         ev = next((e for e in evs if e.get("peer_id") is not None and e["peer_id"] == c["peer_id"]), None)
+        det = App.detected.get(c["id"]) if st.get("live") else None
         out.append({**c, **st,
+                    "match": {k: det.get(k) for k in ("title", "score", "league")} if det and det.get("title") else None,
                     "event": {"name": ev["name"], "time": ev.get("time"), "league": ev.get("league")} if ev else None,
                     "stream": stv.state if stv else "idle",
                     "message": stv.message if stv else ""})
@@ -306,6 +313,7 @@ async def play(request: Request):
             others.remove(oldest)
     if request.method == "POST" and s.state in ("idle", "offline", "error", "unsupported"):
         App.live_cache.pop(ch["peer_id"], None)
+        await cancel_snapshot(ch["peer_id"])
         s.start()
     s.touch()
     return JSONResponse({"stream": s.state, "message": s.message})
@@ -470,6 +478,109 @@ async def hls(request: Request):
     return FileResponse(path, media_type="video/mp2t", headers={"Cache-Control": "max-age=60"})
 
 
+# --------------------------------------------------------------------------- nome della partita dal video
+
+SCAN_PLAYING_S = 120      # canale aperto: rilettura dal video già scaricato
+SCAN_IDLE_S = 600         # canale non aperto: un pezzo di diretta ogni 10 minuti
+SCAN_ACTIVE_S = 15 * 60   # si legge solo se qualcuno ha usato l'app negli ultimi 15 minuti
+
+
+async def cancel_snapshot(peer_id) -> None:
+    """Se sto leggendo un fotogramma dalla stessa diretta, lo interrompo (esce dalla diretta) prima di aprirla."""
+    snap = App.snapshot
+    if snap and snap[0] == peer_id and not snap[1].done():
+        snap[1].cancel()
+        try:
+            await snap[1]
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
+
+async def _frame_from_call(peer_id: int, tmp: Path) -> Path | None:
+    """Entra un attimo nella diretta, scarica un pezzo da 1 s ed esce."""
+    src = TelegramSource(App.live.reader(int(peer_id), 2))
+    try:
+        await asyncio.wait_for(src.open(), 40)
+        chunk = None
+        for _ in range(3):
+            chunk = await asyncio.wait_for(src.next(), 45)
+            if chunk:
+                break
+        if not chunk:
+            return None
+        f = tmp / f"chunk.{chunk.container or 'mp4'}"
+        f.write_bytes(chunk.media)
+        return f
+    finally:
+        try:
+            await src.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def detect_channel(c: dict, fixtures: list[dict]) -> None:
+    import scorebug
+    import tempfile
+    s = App.streamers.get(c["id"])
+    tmp = Path(tempfile.mkdtemp(prefix="cs-snap-"))
+    try:
+        if s and s.state == "live":
+            src = scorebug.latest_segment(s.dir)
+            how = "video aperto"
+        elif s and s.running:
+            return                                   # si sta collegando: riprovo al prossimo giro
+        elif config.DEMO:
+            src, how = None, "demo"
+        else:
+            task = asyncio.create_task(_frame_from_call(c["peer_id"], tmp))
+            App.snapshot = (c["peer_id"], task)
+            try:
+                src = await task
+            finally:
+                App.snapshot = None
+            how = "pezzo di diretta"
+        text = await scorebug.read_text(src) if src else ""
+        if config.DEMO and not text:
+            text = DemoSource.BUGS[c["id"] % len(DemoSource.BUGS)]
+        res = scorebug.identify(text, fixtures)
+        log.info("Canale %s (%s): letto «%s» → %s", c["id"], how, " ".join(text.split())[:80], res and res["title"])
+        App.detected[c["id"]] = {**(res or {"title": None}), "at": time.monotonic()}
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.info("Canale %s: nome partita non letto (%s)", c["id"], e)
+        App.detected[c["id"]] = {**App.detected.get(c["id"], {"title": None}), "at": time.monotonic()}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def scan_loop() -> None:
+    import scorebug
+    await asyncio.sleep(15)
+    if not await scorebug.engine() and not config.DEMO:
+        return
+    while True:
+        try:
+            if time.monotonic() - App.last_seen < SCAN_ACTIVE_S and (App.live or config.DEMO):
+                fixtures = (await today_matches()).get("matches") or []
+                for c in load_channels():
+                    st = await live_status(c["peer_id"])          # di solito già in cache
+                    if not st.get("live"):
+                        App.detected.pop(c["id"], None)
+                        continue
+                    d, s = App.detected.get(c["id"]), App.streamers.get(c["id"])
+                    every = SCAN_PLAYING_S if (s and s.state == "live") else SCAN_IDLE_S
+                    if d and time.monotonic() - d["at"] < every:
+                        continue
+                    await detect_channel(c, fixtures)
+                    await asyncio.sleep(3)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("Lettura nomi partite")
+        await asyncio.sleep(20)
+
+
 # --------------------------------------------------------------------------- lifecycle
 
 @asynccontextmanager
@@ -481,7 +592,9 @@ async def lifespan(_app):
         log.info("Modalità DEMO: canali di prova, nessun collegamento a Telegram.")
     else:
         await connect_telegram()
+    scan = asyncio.create_task(scan_loop())
     yield
+    scan.cancel()
     for s in list(App.streamers.values()):
         await s.stop()
     await App.login.cancel()

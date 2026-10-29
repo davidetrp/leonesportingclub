@@ -149,6 +149,12 @@ LG permette di installare app fuori dallo store solo con la sua **modalità svil
 - **Consumo:** il server non ricodifica se la diretta è già H.264/AAC (il caso normale), quindi gira anche su un Raspberry Pi. Ogni canale si ferma da solo 45 secondi dopo che smetti di guardarlo.
 - **Qualità:** `STREAM_QUALITY` in `.env` (0 bassa, 1 media, 2 alta). Usa 1 se guardi spesso con i dati mobili.
 
+## Nome della partita dal video
+
+Mentre usi l'app, il server guarda il riquadro del punteggio **in alto a sinistra** del video di ogni canale in diretta e lo abbina alle partite di oggi: nella lista compare «Juventus – Inter 1-0» al posto del nome del canale, con il nome Telegram sotto (📡). I canali aperti si rileggono ogni 2 minuti; quelli non aperti ogni 10 minuti, entrando un attimo nella diretta per prendere un solo pezzo di video.
+
+Sul Mac usa il riconoscimento testo di macOS (lo prepara da solo al primo avvio, se ci sono gli strumenti per sviluppatori di Apple, gli stessi che chiede Homebrew). Se non riesce, usa Tesseract: `brew install tesseract`.
+
 ## Problemi comuni
 
 | Messaggio nell'app | Cosa fare |
