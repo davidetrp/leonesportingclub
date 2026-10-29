@@ -872,7 +872,13 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = url;
     } else { overlay("Questo browser non riproduce lo stream.", "Prova con Chrome, Safari o Firefox aggiornati."); return; }
-    var p = video.play(); if (p && p.catch) p.catch(function () {});
+    // Audio acceso: sempre sulla TV, sul telefono se l'hai già attivato una volta. Se il browser non lo
+    // permette senza un tocco, parte muto e si accende al primo tasto o con «Attiva audio».
+    video.muted = !(TV || load("cs-sound", false));
+    var p = video.play();
+    if (p && p.catch) p.catch(function (err) {
+      if (err && err.name === "NotAllowedError" && !video.muted) { video.muted = true; var p2 = video.play(); if (p2 && p2.catch) p2.catch(function () {}); }
+    });
     video.addEventListener("playing", hideOverlay, { once: true });
   }
 
@@ -905,7 +911,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     }).catch(function () {});
   }
 
-  $("unmute").addEventListener("click", function () { video.muted = false; var p = video.play(); if (p && p.catch) p.catch(function () {}); $("unmute").hidden = true; });
+  $("unmute").addEventListener("click", function () { video.muted = false; store("cs-sound", true); var p = video.play(); if (p && p.catch) p.catch(function () {}); $("unmute").hidden = true; });
   $("full").addEventListener("click", function () {
     if (video.requestFullscreen) video.requestFullscreen().catch(function () {});
     else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
@@ -1323,6 +1329,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
 
   document.addEventListener("keydown", function (e) {
     lastKey = Date.now();
+    if (TV && video.muted && playing) { video.muted = false; var pu = video.play(); if (pu && pu.catch) pu.catch(function () {}); }
     var t = e.target && e.target.tagName, key = e.key, code = e.keyCode;
     var back = key === "Escape" || key === "GoBack" || key === "BrowserBack" || code === 461 || code === 10009;
     if (back) {
