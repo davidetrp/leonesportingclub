@@ -186,6 +186,14 @@ body.tv .rail { order: 0; position: sticky; top: 20px; max-height: calc(100vh - 
 body.tv .grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 body.tv .star, body.tv footer, body.tv .guide-link { display: none; }
 .guide-link { text-decoration: none; }
+.views { display: inline-flex; gap: 6px; padding: 4px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
+.view-btn { border: 0; background: transparent; }
+.view-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); box-shadow: none; }
+.cinema { display: grid; gap: 10px; }
+.cinema-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cinema-title { font-family: var(--font-display); font-weight: 800; font-size: 1.35rem; text-transform: uppercase; letter-spacing: .03em; }
+.cinema iframe { width: 100%; height: calc(100vh - 200px); min-height: 420px; border: 0; border-radius: 14px; background: #000; display: block; }
+.cinema-bar a { text-decoration: none; }
 body.tv:not(.theater) .screen { aspect-ratio: auto; height: 52vh; }
 body.tv { padding-top: 28px; }
 body.tv .hint::after { content: " · OK apre · OK di nuovo = schermo intero · Indietro esce"; }
@@ -203,6 +211,10 @@ body.theater .ctrl { display: none !important; }
 <div class="page">
   <header>
     <h1 class="brand"><img src="/static/logo.svg" alt="" width="56" height="56"><span>Leone<small>Sporting Club</small></span></h1>
+    <div class="views" id="views" role="tablist" aria-label="Vista" hidden>
+      <button class="toggle view-btn" id="vCanali" type="button" role="tab" aria-pressed="true">📡 Canali</button>
+      <button class="toggle view-btn" id="vCinema" type="button" role="tab" aria-pressed="false">🎬 Cinema</button>
+    </div>
     <div class="head-right"><a class="toggle guide-link" href="/guida">📺 Guida TV</a><span class="hint" id="topHint">Tasti 1–9 per cambiare canale</span></div>
   </header>
 
@@ -213,6 +225,15 @@ body.theater .ctrl { display: none !important; }
       </label>
       <div class="row"><button class="btn" type="submit">Entra</button><p class="note bad" id="loginErr"></p></div>
     </form>
+  </section>
+
+  <section class="cinema" id="cinema" hidden aria-label="Cinema">
+    <div class="cinema-bar">
+      <span class="cinema-title">🎬 Modalità cinema · StreamFury</span>
+      <a class="toggle" id="cinemaOpen" href="#" target="_blank" rel="noopener">Apri a schermo pieno ↗</a>
+    </div>
+    <iframe id="cinemaFrame" title="StreamFury" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+    <p class="note">Non vedi niente qui sopra? La tua app non permette di essere mostrata dentro un altro sito: usa «Apri a schermo pieno».</p>
   </section>
 
   <div class="layout" id="app" hidden>
@@ -315,6 +336,8 @@ body.theater .ctrl { display: none !important; }
   var editing = null;         // null = canale selezionato, "new" = nuovo canale
   var hls = null, playing = false, statusTimer = null, tuneToken = 0, tgChannels = null, delArmed = false;
   var nameTouched = false;    // true se il nome è stato scritto a mano
+  var cinemaUrl = null, view = "canali";
+  try { if (localStorage.getItem("cs-view") === "cinema") view = "cinema"; } catch (e) {}
 
   function store(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
   function load(k, d) { try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
@@ -361,7 +384,10 @@ body.theater .ctrl { display: none !important; }
   function refresh() {
     return api("/api/state").then(function (r) {
       channels = r.channels || [];
-      $("app").hidden = false;
+      cinemaUrl = r.cinema_url || null;
+      $("views").hidden = !cinemaUrl;
+      $("app").hidden = view === "cinema" && !!cinemaUrl;
+      if (view === "cinema" && cinemaUrl && $("cinema").hidden) setView("cinema");
       $("topHint").innerHTML = r.demo ? '<span class="demo-badge">Demo</span>' : "Tasti 1–9 per cambiare canale";
       if (r.telegram_error) $("foot").textContent = r.telegram_error;
       sortChannels(); renderGrid(); renderInfo();
@@ -767,6 +793,32 @@ body.theater .ctrl { display: none !important; }
   function loadFixtures() { api("/api/matches").then(renderFixtures).catch(function () {}); }
 
   // ---------------------------------------------------------------- keys + boot
+  // ---------------------------------------------------------------- vista Cinema
+  function setView(v) {
+    if (v === "cinema" && !cinemaUrl) v = "canali";
+    if (v === "cinema" && TV) {
+      // Sulla TV apro l'app a tutto schermo: il tasto Indietro riporta qui.
+      stopPlayer();
+      location.href = cinemaUrl;
+      return;
+    }
+    view = v;
+    try { localStorage.setItem("cs-view", v); } catch (e) {}
+    $("vCanali").setAttribute("aria-pressed", String(v === "canali"));
+    $("vCinema").setAttribute("aria-pressed", String(v === "cinema"));
+    $("cinema").hidden = v !== "cinema";
+    $("app").hidden = v === "cinema";
+    if (v === "cinema") {
+      stopPlayer();                        // niente diretta in sottofondo: risparmio banda
+      $("cinemaOpen").href = cinemaUrl;
+      if ($("cinemaFrame").getAttribute("src") !== cinemaUrl) $("cinemaFrame").setAttribute("src", cinemaUrl);
+    } else if (currentId && $("overlay").hidden === false) {
+      tune(currentId);
+    }
+  }
+  $("vCanali").addEventListener("click", function () { setView("canali"); });
+  $("vCinema").addEventListener("click", function () { setView("cinema"); });
+
   // ---------------------------------------------------------------- TV (telecomando)
   var TV = /[?&]tv=1/.test(location.search) || /Web0S|webOS|NetCast|AFT[A-Z]|CanaliSportTV|SmartTV|BRAVIA|Tizen/i.test(navigator.userAgent);
   try { if (TV) sessionStorage.setItem("cs-tv", "1"); else if (sessionStorage.getItem("cs-tv") === "1") TV = true; } catch (e) {}
@@ -780,7 +832,7 @@ body.theater .ctrl { display: none !important; }
   var tvFocused = null, calmTimer = null;
   function focusables() {
     return Array.prototype.filter.call(document.querySelectorAll(
-      ".card, #fixtures .fx, #events .watch, #unlockBtn, .head-right .toggle, #settings summary, #settings[open] select, #settings[open] input, #settings[open] .btn:not([hidden]), #favToggle, #loginForm input, #loginForm .btn"),
+      ".card, #fixtures .fx, #events .watch, #unlockBtn, .head-right .toggle, #views .toggle, #settings summary, #settings[open] select, #settings[open] input, #settings[open] .btn:not([hidden]), #favToggle, #loginForm input, #loginForm .btn"),
       function (el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !el.closest("[hidden]"); });
   }
   function tvFocus(el) {

@@ -25,6 +25,7 @@ import android.webkit.WebViewClient;
 public class MainActivity extends Activity {
     private static final String SETUP = "file:///android_asset/launcher.html";
     private WebView web;
+    private String serverHost = null;   // host del server Leone Sporting Club (per distinguere la vista Cinema)
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -49,6 +50,13 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "CanaliTV");
         web.setWebChromeClient(new WebChromeClient());
         web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                if (url != null && (url.contains("?tv=1") || url.contains("&tv=1"))) {
+                    serverHost = Uri.parse(url).getHost();
+                }
+            }
+
             @Override
             public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
                 if (req.isForMainFrame() && !req.getUrl().toString().startsWith("file:")) {
@@ -77,7 +85,14 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         // Prima chiedo alla pagina (esce dallo schermo intero, chiude le impostazioni...), poi chiudo l'app.
         web.evaluateJavascript("(window.tvBack && window.tvBack()) ? 'yes' : 'no'", value -> {
-            if (value == null || !value.contains("yes")) {
+            if (value != null && value.contains("yes")) {
+                return;
+            }
+            String host = web.getUrl() == null ? null : Uri.parse(web.getUrl()).getHost();
+            boolean outside = host != null && serverHost != null && !host.equals(serverHost);
+            if (outside && web.canGoBack()) {
+                web.goBack();          // dalla vista Cinema torno ai canali
+            } else {
                 finish();
             }
         });
