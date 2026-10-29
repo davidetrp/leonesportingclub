@@ -51,6 +51,8 @@ HLS_ROOT = config.DATA_DIR / "hls"
 SLOTS_FILE = config.DATA_DIR / "canali.json"
 SECRET_FILE = config.DATA_DIR / "secret.key"
 LIVE_CACHE_S = 45
+MIN_VIEWERS = 50          # sotto questa soglia il canale è nascosto e non si carica niente
+SMALL_CACHE_S = 300
 
 
 class App:
@@ -154,7 +156,10 @@ async def live_status(peer_id) -> dict:
     cached = App.live_cache.get(peer_id)
     # Mentre una diretta è in riproduzione aggiorno lo stato più di rado (ogni 2 minuti), ma lo aggiorno.
     watching = any(s.running for s in App.streamers.values())
-    if cached and now - cached[0] < (LIVE_CACHE_S * 2 if watching else LIVE_CACHE_S):
+    ttl = LIVE_CACHE_S * 2 if watching else LIVE_CACHE_S
+    if cached and (cached[1].get("viewers") or 0) < MIN_VIEWERS:
+        ttl = SMALL_CACHE_S                 # canali nascosti (sotto 50 spettatori): controllo ogni 5 minuti
+    if cached and now - cached[0] < ttl:
         return cached[1]
     try:
         info = await App.live.live_info(int(peer_id))
@@ -245,7 +250,7 @@ async def state(request: Request):
                     "event": {"name": ev["name"], "time": ev.get("time"), "league": ev.get("league")} if ev else None,
                     "stream": stv.state if stv else "idle",
                     "message": stv.message if stv else ""})
-    return JSONResponse({"demo": config.DEMO, "telegram_error": App.tg_error, "channels": out,
+    return JSONResponse({"demo": config.DEMO, "telegram_error": App.tg_error, "channels": out, "min_viewers": MIN_VIEWERS,
                          "can_edit": is_home(request)})
 
 
@@ -496,8 +501,6 @@ async def hls(request: Request):
 # --------------------------------------------------------------------------- nome della partita dal video
 
 SCAN_PLAYING_S = 120      # canale aperto: rilettura dal video già scaricato
-SCAN_IDLE_S = 600         # canale non aperto: un pezzo di diretta ogni 10 minuti
-SCAN_ACTIVE_S = 15 * 60   # si legge solo se qualcuno ha usato l'app negli ultimi 15 minuti
 
 
 async def cancel_snapshot(peer_id) -> None:
@@ -570,35 +573,85 @@ async def detect_channel(c: dict, fixtures: list[dict]) -> None:
 
 
 async def scan_loop() -> None:
+    """Dopo lo splash rilegge solo il canale che stai guardando, dal video già scaricato (nessun nuovo ingresso
+    in altre dirette). Tutti gli altri canali si leggono solo durante lo splash (preload)."""
     import scorebug
     await asyncio.sleep(15)
     if not await scorebug.engine() and not config.DEMO:
         return
     while True:
         try:
-            if time.monotonic() - App.last_seen < SCAN_ACTIVE_S and (App.live or config.DEMO):
-                fixtures = (await today_matches()).get("matches") or []
-                for c in load_channels():
-                    st = await live_status(c["peer_id"])          # di solito già in cache
-                    if not st.get("live"):
-                        App.detected.pop(c["id"], None)
-                        continue
-                    d, s = App.detected.get(c["id"]), App.streamers.get(c["id"])
-                    playing_here = bool(s and s.state == "live")
-                    # Mai entrare in un'altra diretta mentre se ne guarda una: Telegram tiene l'account in una
-                    # diretta alla volta e quella in visione si interromperebbe (scatti e rientri).
-                    if not playing_here and not config.DEMO and any(o.running for o in App.streamers.values()):
-                        continue
-                    every = SCAN_PLAYING_S if playing_here else SCAN_IDLE_S
-                    if d and time.monotonic() - d["at"] < every:
-                        continue
-                    await detect_channel(c, fixtures)
-                    await asyncio.sleep(3)
+            fixtures = None
+            for c in load_channels():
+                s = App.streamers.get(c["id"])
+                if not (s and s.state == "live"):
+                    continue
+                d = App.detected.get(c["id"])
+                if d and time.monotonic() - d["at"] < SCAN_PLAYING_S:
+                    continue
+                if fixtures is None:
+                    fixtures = (await today_matches()).get("matches") or []
+                await detect_channel(c, fixtures)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
             log.exception("Lettura nomi partite")
         await asyncio.sleep(20)
+
+
+# --------------------------------------------------------------------------- preload durante lo splash
+
+PRELOAD_BUDGET_S = 12      # massimo di tempo per leggere i nomi delle partite mentre gira lo splash
+DETECT_FRESH_S = 15 * 60   # un nome letto da meno di 15 minuti non si rilegge
+_preload = {"running": False, "done": 0, "total": 0, "step": ""}
+
+
+async def _run_preload() -> None:
+    try:
+        channels = load_channels()
+        now = time.monotonic()
+        for c in channels:                   # spettatori aggiornati per i canali che contano
+            cached = App.live_cache.get(c["peer_id"])
+            if cached and now - cached[0] > 15 and (cached[1].get("viewers") or 0) >= MIN_VIEWERS:
+                App.live_cache.pop(c["peer_id"], None)
+        statuses = await asyncio.gather(*(live_status(c["peer_id"]) for c in channels))
+        try:
+            fixtures = (await asyncio.wait_for(today_matches(), 8)).get("matches") or []
+        except Exception:  # noqa: BLE001
+            fixtures = []
+        todo = [(c, st) for c, st in zip(channels, statuses)
+                if st.get("live") and (st.get("viewers") or 0) >= MIN_VIEWERS
+                and not (App.detected.get(c["id"]) and time.monotonic() - App.detected[c["id"]]["at"] < DETECT_FRESH_S)]
+        todo.sort(key=lambda x: -(x[1].get("viewers") or 0))
+        _preload["total"] = len(todo)
+        import scorebug
+        if not todo or (not config.DEMO and not await scorebug.engine()):
+            return
+        end = time.monotonic() + PRELOAD_BUDGET_S
+        for i, (c, _st) in enumerate(todo):
+            left = end - time.monotonic()
+            if left < 2 or (not config.DEMO and any(o.running for o in App.streamers.values())):
+                break                         # tempo finito, o qualcuno ha già aperto un canale
+            _preload["step"] = f"Leggo le partite in diretta… {i + 1} di {len(todo)}"
+            try:
+                await asyncio.wait_for(detect_channel(c, fixtures), left)
+            except asyncio.TimeoutError:
+                log.info("Canale %s: nome partita non letto in tempo", c["id"])
+            _preload["done"] = i + 1
+    except Exception:  # noqa: BLE001
+        log.exception("Preload")
+    finally:
+        _preload.update(running=False, step="")
+
+
+async def preload(request: Request):
+    """POST: avvia il caricamento di spettatori e nomi partita (lo fa lo splash). GET: a che punto è."""
+    if not is_authed(request):
+        return need_auth()
+    if request.method == "POST" and not _preload["running"]:
+        _preload.update(running=True, done=0, total=0, step="Controllo le dirette…")
+        asyncio.create_task(_run_preload())
+    return JSONResponse({k: _preload[k] for k in ("running", "done", "total", "step")})
 
 
 # --------------------------------------------------------------------------- lifecycle
@@ -818,6 +871,7 @@ routes = [
     Route("/tv/webos", tv_webos),
     Route("/api/tv/lg", lg_install, methods=["GET", "POST"]),
     Route("/api/settings", settings, methods=["GET", "POST"]),
+    Route("/api/preload", preload, methods=["GET", "POST"]),
     Route("/api/account", account_login, methods=["POST"]),
     Route("/api/login", login, methods=["POST"]),
     Route("/api/state", state),
