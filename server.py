@@ -524,6 +524,10 @@ async def lg_install(request: Request):
     return JSONResponse({"running": _lg["running"], "steps": _lg["steps"], "result": _lg["result"]})
 
 
+async def guida(_: Request):
+    return FileResponse(STATIC / "guida.html", headers={"Cache-Control": "no-cache"})
+
+
 async def robots(_: Request):
     return FileResponse(STATIC / "robots.txt", media_type="text/plain")
 
@@ -531,6 +535,7 @@ async def robots(_: Request):
 routes = [
     Route("/", index),
     Route("/robots.txt", robots),
+    Route("/guida", guida),
     Route("/tv", tv_apk),
     Route("/tv/webos", tv_webos),
     Route("/api/tv/lg", lg_install, methods=["GET", "POST"]),

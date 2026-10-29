@@ -184,7 +184,8 @@ body.tv .page { max-width: none; }
 body.tv .layout { grid-template-columns: 380px minmax(0, 1fr); }
 body.tv .rail { order: 0; position: sticky; top: 20px; max-height: calc(100vh - 60px); overflow-y: auto; }
 body.tv .grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-body.tv .star, body.tv footer { display: none; }
+body.tv .star, body.tv footer, body.tv .guide-link { display: none; }
+.guide-link { text-decoration: none; }
 body.tv:not(.theater) .screen { aspect-ratio: auto; height: 52vh; }
 body.tv { padding-top: 28px; }
 body.tv .hint::after { content: " · OK apre · OK di nuovo = schermo intero · Indietro esce"; }
@@ -202,7 +203,7 @@ body.theater .ctrl { display: none !important; }
 <div class="page">
   <header>
     <h1 class="brand"><img src="/static/logo.svg" alt="" width="56" height="56"><span>Leone<small>Sporting Club</small></span></h1>
-    <div class="head-right"><span class="hint" id="topHint">Tasti 1–9 per cambiare canale</span></div>
+    <div class="head-right"><a class="toggle guide-link" href="/guida">📺 Guida TV</a><span class="hint" id="topHint">Tasti 1–9 per cambiare canale</span></div>
   </header>
 
   <section class="box" id="loginCard" hidden>

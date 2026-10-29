@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Guida TV · Leone Sporting Club</title>
+<meta name="theme-color" content="#0b1018">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Barlow:wght@400;500;600&display=swap">
+<style>
+/* Layout: guida a passi numerati, una sezione per dispositivo; l'indirizzo del server compare già compilato */
+:root {
+  --bg: #eef1f5; --panel: #ffffff; --ink: #121a26; --muted: #5b6676; --line: #d5dbe4;
+  --accent: #d6411f; --accent-ink: #ffffff; --gold: #b67a00; --code: #e7ebf1;
+  --font-display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --font-body: "Barlow", "Segoe UI", system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0b1018; --panel: #141c28; --ink: #e8edf4; --muted: #92a0b3; --line: #253144;
+          --accent: #ff6a3d; --accent-ink: #1a0b05; --gold: #f5b83d; --code: #0b1018; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 17px; line-height: 1.5;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 32px);
+  padding-bottom: max(40px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.page { max-width: 760px; margin: 0 auto; display: grid; gap: 24px; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+.brand img { width: 52px; height: 52px; }
+.brand span { display: grid; line-height: .9; font-family: var(--font-display); font-weight: 900; font-size: 2rem; text-transform: uppercase; color: var(--gold); }
+.brand small { font-size: .5em; font-weight: 800; letter-spacing: .14em; color: var(--ink); margin-top: 4px; }
+.back { color: var(--accent); font-weight: 600; text-decoration: none; }
+h1 { font-family: var(--font-display); font-weight: 900; font-size: 2.6rem; line-height: 1; margin: 0; text-transform: uppercase; text-wrap: balance; }
+.lead { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.tab { appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-weight: 600;
+       padding: 9px 16px; border-radius: 999px; cursor: pointer; }
+.tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.tab:focus-visible, .copy:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px 20px 22px; display: grid; gap: 14px; }
+h2 { font-family: var(--font-display); font-weight: 800; font-size: 1.6rem; text-transform: uppercase; margin: 0; letter-spacing: .02em; }
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: s; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 12px; }
+ol.steps > li::before { content: counter(s); font-family: var(--font-display); font-weight: 900; font-size: 1.3rem; line-height: 38px; text-align: center;
+                        width: 38px; height: 38px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); }
+ol.steps > li > div { min-width: 0; }
+ol.steps b { font-weight: 600; }
+.path { color: var(--muted); }
+.addr { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.addr code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 1.02rem; background: var(--code); border: 1px solid var(--line);
+             border-radius: 8px; padding: 8px 12px; overflow-wrap: anywhere; min-width: 0; }
+.copy { appearance: none; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-size: .9rem; font-weight: 600;
+        padding: 7px 12px; border-radius: 8px; cursor: pointer; }
+.note { margin: 0; font-size: .92rem; color: var(--muted); }
+table { width: 100%; border-collapse: collapse; }
+td { padding: 9px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+td:first-child { font-weight: 600; width: 38%; padding-right: 12px; }
+tr:last-child td { border-bottom: 0; }
+.tablewrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="52" height="52"><span>Leone<small>Sporting Club</small></span></a>
+    <a class="back" href="/">← Torna ai canali</a>
+  </header>
+
+  <div>
+    <h1>Guida TV</h1>
+    <p class="lead">Come vedere Leone Sporting Club sul Fire TV Stick e sulle TV LG. L'indirizzo del tuo server è già scritto nei passaggi.</p>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="t-fire" aria-selected="true" aria-controls="fire" type="button">Fire TV Stick</button>
+    <button class="tab" role="tab" id="t-lg" aria-selected="false" aria-controls="lg" type="button">TV LG</button>
+    <button class="tab" role="tab" id="t-remote" aria-selected="false" aria-controls="remote" type="button">Telecomando</button>
+  </div>
+
+  <section id="fire" role="tabpanel" aria-labelledby="t-fire">
+    <h2>Fire TV Stick</h2>
+    <ol class="steps">
+      <li><div><b>Attiva le opzioni sviluppatore</b> (una volta sola).<br>
+        <span class="path">Impostazioni → La mia Fire TV → Informazioni</span>: seleziona il nome del dispositivo (es. «Fire TV Stick 4K») e premi <b>OK 7 volte</b>, finché compare «Ora sei uno sviluppatore».</div></li>
+      <li><div><b>Installa Downloader.</b><br>Dalla schermata principale cerca <b>Downloader</b> (icona arancione) e premi <b>Scarica</b>.</div></li>
+      <li><div><b>Dai il permesso a Downloader.</b><br>
+        <span class="path">Impostazioni → La mia Fire TV → Opzioni sviluppatore → Installa app sconosciute</span> → metti <b>Downloader</b> su <b>ON</b>.
+        <p class="note">Sui modelli più vecchi la voce si chiama «App di origine sconosciuta» → ON.</p></div></li>
+      <li><div><b>Scarica l'app.</b> Apri Downloader (se chiede l'accesso ai file, premi <b>Consenti</b>), scrivi questo indirizzo nella casella e premi <b>Go</b>:
+        <div class="addr"><code data-url="/tv">…/tv</code><button class="copy" type="button">Copia</button></div></div></li>
+      <li><div><b>Installa.</b> Finito il download premi <b>Installa</b> e poi <b>Fine</b>. Quando Downloader chiede se eliminare il file, premi <b>Elimina</b>.</div></li>
+      <li><div><b>Apri Leone Sporting Club.</b> Lo trovi in <span class="path">App e canali</span> (o tieni premuto il tasto Home → App). La prima volta scrivi l'indirizzo del server, premi <b>Collega</b> e inserisci la password:
+        <div class="addr"><code data-url="">…</code><button class="copy" type="button">Copia</button></div></div></li>
+    </ol>
+    <p class="note">Per aggiornare l'app ripeti il passo 4: si installa sopra la vecchia e tiene le impostazioni. Il tasto Menu ≡ del telecomando serve a cambiare l'indirizzo del server.</p>
+  </section>
+
+  <section id="lg" role="tabpanel" aria-labelledby="t-lg" hidden>
+    <h2>TV LG (webOS)</h2>
+    <p class="note"><b>Subito, senza installare niente:</b> apri il <b>Web Browser</b> della TV e vai a questo indirizzo. Il sito si comanda col telecomando.</p>
+    <div class="addr"><code data-url="">…</code><button class="copy" type="button">Copia</button></div>
+    <p class="note" style="margin-top:6px"><b>Con l'app</b> (serve il Mac acceso nella stessa rete della TV):</p>
+    <ol class="steps">
+      <li><div><b>Account LG sviluppatore</b>: crealo gratis su <span class="path">webostv.developer.lge.com</span> (Login → Create Account).</div></li>
+      <li><div><b>Sulla TV</b> apri il <b>LG Content Store</b>, cerca <b>Developer Mode</b>, installala e aprila. Entra con l'account LG, attiva <b>Dev Mode Status</b> (la TV si riavvia), poi riaprila e attiva <b>Key Server</b>.</div></li>
+      <li><div><b>Sul Mac</b>, la prima volta: <span class="path">Impostazioni di Sistema → Privacy e sicurezza → Rete locale</span> → attiva <b>iTerm</b>, poi riavvia il server.</div></li>
+      <li><div><b>Dal telefono</b>, nella pagina dei canali apri <b>Installa su TV LG</b> in fondo, scrivi <b>IP</b> e <b>passphrase</b> che vedi nell'app Developer Mode e premi <b>Installa</b>. L'app si apre da sola sulla TV, già collegata.</div></li>
+    </ol>
+    <p class="note">La modalità sviluppatore va rinnovata ogni tanto: apri Developer Mode sulla TV e premi <b>Extend</b>.</p>
+  </section>
+
+  <section id="remote" role="tabpanel" aria-labelledby="t-remote" hidden>
+    <h2>Telecomando</h2>
+    <div class="tablewrap"><table>
+      <tr><td>Frecce</td><td>Ti muovi tra canali, partite e impostazioni (riquadro arancione)</td></tr>
+      <tr><td>OK</td><td>Apre il canale; OK di nuovo sullo stesso canale = schermo intero</td></tr>
+      <tr><td>Su / Giù a schermo intero, CH+ / CH−</td><td>Canale precedente / successivo</td></tr>
+      <tr><td>Indietro</td><td>Esce dallo schermo intero; dalla lista dei canali chiude l'app</td></tr>
+      <tr><td>Menu ≡ (Fire TV)</td><td>Cambia l'indirizzo del server</td></tr>
+    </table></div>
+  </section>
+</div>
+<script>
+(function () {
+  var origin = location.origin;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-url]"), function (el) {
+    el.textContent = origin + el.getAttribute("data-url");
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".copy"), function (btn) {
+    btn.addEventListener("click", function () {
+      var code = btn.previousElementSibling, text = code.textContent;
+      function done() { btn.textContent = "Copiato"; setTimeout(function () { btn.textContent = "Copia"; }, 1500); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { select(code); });
+      } else select(code);
+    });
+  });
+  function select(el) { var r = document.createRange(); r.selectNodeContents(el); var s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+  var tabs = document.querySelectorAll(".tab");
+  function show(id) {
+    Array.prototype.forEach.call(tabs, function (t) {
+      var on = t.getAttribute("aria-controls") === id;
+      t.setAttribute("aria-selected", String(on));
+      document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+    });
+  }
+  Array.prototype.forEach.call(tabs, function (t) { t.addEventListener("click", function () { show(t.getAttribute("aria-controls")); }); });
+  if (/^#(fire|lg|remote)$/.test(location.hash)) show(location.hash.slice(1));
+})();
+</script>
+</body>
+</html>
