@@ -1,6 +1,6 @@
 """Server di Canali Sport: app web + API + stream HLS delle dirette Telegram.
 
-Avvio:  python server.py      (prima volta: python login.py)
+Avvio:  python avvia.py   (l'account Telegram si collega da Impostazioni nell'app, oppure con python login.py)
 """
 from __future__ import annotations
 
@@ -21,7 +21,9 @@ from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Re
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
+import account
 import config
+from account import AccountLogin, events_bot
 from bot_events import demo_events
 from matches import today_matches
 from streamer import DemoSource, SlotStreamer, TelegramSource
@@ -48,6 +50,9 @@ class App:
     events_cache: tuple[float, list] | None = None
     events_error = ""
     unlock_task = None
+    me = None              # utente Telegram collegato
+    login = AccountLogin()
+    demo_account = {"name": "Account demo", "username": "leone_demo", "phone": "393331234567"}
 
 
 # --------------------------------------------------------------------------- persistence
@@ -325,7 +330,7 @@ EVENTS_CACHE_S = 90
 
 
 async def get_events(refresh: bool = False) -> list[dict]:
-    if not config.EVENTS_BOT:
+    if not events_bot():
         return []
     if config.DEMO:
         return demo_events()
@@ -339,7 +344,7 @@ async def get_events(refresh: bool = False) -> list[dict]:
         App.events_error = ""
     except Exception as e:  # noqa: BLE001
         log.warning("Eventi dal bot non letti: %s", e)
-        App.events_error = f"Non riesco a leggere @{config.EVENTS_BOT}: {e}"
+        App.events_error = f"Non riesco a leggere @{events_bot()}: {e}"
         return App.events_cache[1] if App.events_cache else []
     App.events_cache = (now, evs)
     return evs
@@ -361,7 +366,7 @@ async def events(request: Request):
     evs = await get_events(refresh=refresh)
     channels = load_channels()
     locked = bool(App.events and App.events.locked)
-    return JSONResponse({"bot": config.EVENTS_BOT, "error": App.events_error, "locked": locked,
+    return JSONResponse({"bot": events_bot(), "error": App.events_error, "locked": locked,
                          "gate_text": App.events.gate_text if locked else "",
                          "events": [public_event(e, i, channels) for i, e in enumerate(evs)]})
 
@@ -479,6 +484,7 @@ async def lifespan(_app):
     yield
     for s in list(App.streamers.values()):
         await s.stop()
+    await App.login.cancel()
     if App.client:
         await App.client.disconnect()
 
@@ -494,17 +500,126 @@ async def connect_telegram() -> None:
     client = TelegramClient(str(config.SESSION_PATH), config.TG_API_ID, config.TG_API_HASH)
     await client.connect()
     if not await client.is_user_authorized():
-        App.tg_error = "Account Telegram non collegato: esegui  python login.py  sul server."
+        App.tg_error = "Account Telegram non collegato: collegalo da Impostazioni → Account Telegram (da casa)."
         log.error(App.tg_error)
         await client.disconnect()
         return
     await client.get_dialogs()          # riempie la cache dei canali
     App.client, App.live = client, TelegramLive(client)
-    if config.EVENTS_BOT:
+    App.tg_error = ""
+    apply_events_bot()
+    App.me = await client.get_me()
+    log.info("Telegram collegato come %s", App.me.first_name)
+
+
+def apply_events_bot() -> None:
+    bot = events_bot()
+    App.events_cache, App.events_error = None, ""
+    if bot and App.client:
         from bot_events import BotEvents
-        App.events = BotEvents(client, config.EVENTS_BOT)
-    me = await client.get_me()
-    log.info("Telegram collegato come %s", me.first_name)
+        App.events = BotEvents(App.client, bot)
+    else:
+        App.events = None
+
+
+# --------------------------------------------------------------------------- impostazioni e account
+
+def account_info() -> dict:
+    if config.DEMO:
+        a = App.demo_account
+        return {"connected": True, "name": a["name"], "username": a["username"], "phone": account.mask_phone(a["phone"]),
+                "error": "", "step": App.login.step}
+    me = App.me
+    return {"connected": bool(App.client and me),
+            "name": " ".join(x for x in (getattr(me, "first_name", ""), getattr(me, "last_name", "")) if x) if me else "",
+            "username": getattr(me, "username", "") or "" if me else "",
+            "phone": account.mask_phone(getattr(me, "phone", "")) if me else "",
+            "error": App.tg_error, "step": App.login.step}
+
+
+async def settings(request: Request):
+    """GET: account e impostazioni. POST (solo da casa): {"events_bot": "nome" | ""}."""
+    if not is_authed(request):
+        return need_auth()
+    if request.method == "POST":
+        if not is_home(request):
+            return need_home()
+        body = await request.json()
+        if "events_bot" in body:
+            raw = str(body.get("events_bot") or "").strip()
+            bot = account.clean_bot(raw) if raw else ""
+            if bot is None:
+                return JSONResponse({"error": "Nome del bot non valido (es. @NomeBot)."}, status_code=400)
+            account.save_settings(events_bot=bot)
+            apply_events_bot()
+    return JSONResponse({"can_edit": is_home(request), "demo": config.DEMO, "account": account_info(),
+                         "events_bot": events_bot(), "suggested_bot": account.SUGGESTED_BOT,
+                         "lg_running": _lg["running"]})
+
+
+async def account_login(request: Request):
+    """Cambio account Telegram, solo da casa. action: send_code (phone), code (code), password (password), cancel."""
+    if not is_authed(request):
+        return need_auth()
+    if not is_home(request):
+        return need_home()
+    body = await request.json()
+    action = body.get("action")
+    lg = App.login
+    if action == "cancel":
+        await lg.cancel()
+        return JSONResponse({"ok": True, "account": account_info()})
+    if action == "send_code":
+        phone = account.clean_phone(str(body.get("phone") or ""))
+        if not phone:
+            return JSONResponse({"error": "Numero non valido. Scrivilo con il prefisso, es. +39 333 1234567."}, status_code=400)
+        if config.DEMO:
+            lg.phone, lg.step = phone, "code"
+            return JSONResponse({"step": "code"})
+        res = await lg.send_code(phone)
+        return JSONResponse(res, status_code=400 if "error" in res else 200)
+    if action not in ("code", "password"):
+        return JSONResponse({"error": "Azione sconosciuta."}, status_code=400)
+    if config.DEMO:
+        if lg.step != action:
+            return JSONResponse({"error": "Richiedi prima il codice."}, status_code=400)
+        if action == "code" and str(body.get("code", "")).strip() == "22222":
+            lg.step = "password"
+            return JSONResponse({"step": "password"})
+        App.demo_account = {"name": "Nuovo account demo", "username": "", "phone": lg.phone.lstrip("+")}
+        lg.step = ""
+        return JSONResponse({"ok": True, "account": account_info()})
+    try:
+        res = await (lg.sign_in_code(str(body.get("code") or "")) if action == "code"
+                     else lg.sign_in_password(str(body.get("password") or "")))
+    except Exception as e:  # noqa: BLE001
+        log.exception("Accesso Telegram non riuscito")
+        return JSONResponse({"error": f"Accesso non riuscito: {e}"}, status_code=502)
+    if isinstance(res, dict):
+        return JSONResponse(res, status_code=400 if "error" in res else 200)
+    await switch_account()
+    return JSONResponse({"ok": not App.tg_error, "error": App.tg_error or None, "account": account_info()})
+
+
+async def switch_account() -> None:
+    """Ferma le dirette, esce dal vecchio account e passa alla sessione appena creata."""
+    for s in list(App.streamers.values()):
+        await s.stop()
+    App.streamers.clear()
+    App.live_cache.clear()
+    old = App.client
+    App.client = App.live = App.events = App.me = None
+    if old:
+        try:
+            await old.log_out()          # chiude anche la sessione del vecchio account su Telegram
+        except Exception as e:  # noqa: BLE001
+            log.warning("Uscita dal vecchio account non riuscita: %s", e)
+            try:
+                await old.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+    await App.login.take_session()
+    await connect_telegram()
 
 
 RELEASE = "https://github.com/davidetrp/leonesportingclub/releases/download/tv-app/"
@@ -566,6 +681,8 @@ routes = [
     Route("/tv", tv_apk),
     Route("/tv/webos", tv_webos),
     Route("/api/tv/lg", lg_install, methods=["GET", "POST"]),
+    Route("/api/settings", settings, methods=["GET", "POST"]),
+    Route("/api/account", account_login, methods=["POST"]),
     Route("/api/login", login, methods=["POST"]),
     Route("/api/state", state),
     Route("/api/telegram-channels", telegram_channels),

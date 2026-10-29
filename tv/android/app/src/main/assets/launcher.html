@@ -6,7 +6,7 @@
 <title>Leone Sporting Club</title>
 <style>
   /* Schermata iniziale dell'app TV: indirizzo del server, da compilare una volta col telecomando */
-  :root { --bg: #0b1018; --panel: #141c28; --ink: #e8edf4; --muted: #92a0b3; --line: #253144; --accent: #ff6a3d; --bad: #f0a640; color-scheme: dark; }
+  :root { --bg: #000000; --panel: #0d1015; --ink: #e8edf4; --muted: #8f9aab; --line: #1f2631; --accent: #ff6a3d; --bad: #f0a640; color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
   body { background: var(--bg); color: var(--ink); font-family: "Segoe UI", Roboto, system-ui, sans-serif; font-size: 26px;
@@ -64,7 +64,12 @@
     if (!/^https?:\/\//i.test(v)) v = (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(v) || /:\d+$/.test(v) ? "http://" : "https://") + v;
     return v;
   }
-  function go(v) { location.href = v + "/?tv=1"; }
+  var WEBOS = !!window.PalmSystem || /Web0S|webOS/i.test(navigator.userAgent);
+  function go(v) { location.href = v + "/?tv=1&app=" + (WEBOS ? "webos" : "tv"); }
+  // «Cambia server» nelle impostazioni torna qui con Indietro: in quel caso mostro il modulo invece di ricollegarmi.
+  var nav = window.performance && performance.getEntriesByType ? performance.getEntriesByType("navigation")[0] : null;
+  var cameBack = !!(nav && nav.type === "back_forward") || (window.performance && performance.navigation && performance.navigation.type === 2);
+  window.addEventListener("pageshow", function (e) { if (e.persisted) { document.body.classList.remove("auto"); $("go").focus(); } });
   // Installata dal server: la TV ci passa già l'indirizzo del server nei parametri di avvio.
   try {
     var lp = window.PalmSystem && PalmSystem.launchParams ? JSON.parse(PalmSystem.launchParams) : {};
@@ -74,7 +79,6 @@
   var m = q.match(/[?&]err=([^&]*)/);
   if (m) $("err").textContent = "Non riesco ad aprire " + (saved || "il server") + ": " + decodeURIComponent(m[1]) + ". Controlla l'indirizzo e che il server sia acceso.";
   $("url").value = saved;
-  if (saved && !/[?&](setup|err)=/.test(q)) { document.body.classList.add("auto"); go(saved); return; }
   $("go").addEventListener("click", function () {
     var v = normalize($("url").value);
     if (!v) { $("err").textContent = "Scrivi l'indirizzo del server."; return; }
@@ -92,6 +96,7 @@
     else if (e.key === "ArrowRight" && a === $("go")) { e.preventDefault(); $("reset").focus(); }
     else if (e.key === "ArrowLeft" && a === $("reset")) { e.preventDefault(); $("go").focus(); }
   });
+  if (saved && !cameBack && !/[?&](setup|err)=/.test(q)) { document.body.classList.add("auto"); go(saved); return; }
   (saved ? $("go") : $("url")).focus();
 })();
 </script>

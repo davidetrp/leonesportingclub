@@ -24,7 +24,7 @@ pip install -r requirements.txt
 cp .env.example .env        # su Windows: copy .env.example .env
 ```
 
-Apri `.env` e compila `TG_API_ID`, `TG_API_HASH` e `APP_PASSWORD`.
+Apri `.env` e compila `TG_API_ID` e `TG_API_HASH`.
 
 ffmpeg: su Windows `winget install Gyan.FFmpeg`, su Mac `brew install ffmpeg`, su Linux `sudo apt install ffmpeg`.
 
@@ -34,11 +34,9 @@ Metti `DEMO=1` in `.env`, avvia `python server.py` e apri l'app: i 5 canali tras
 
 ### 2. Collega il tuo account Telegram (una volta sola)
 
-```bash
-python login.py
-```
+Dall'app, con il telefono sulla Wi-Fi di casa: **⚙️ Impostazioni → Account Telegram → Collega account**, scrivi il numero, il codice che arriva su Telegram e l'eventuale password a due fattori. Da lì puoi anche cambiare account quando vuoi. In alternativa, sul server: `python login.py`.
 
-Ti chiede numero di telefono, il codice che arriva su Telegram e l'eventuale password a due fattori. La sessione resta salvata in `data/`. Tieni privata questa cartella: dà accesso al tuo account.
+ La sessione resta salvata in `data/`. Tieni privata questa cartella: dà accesso al tuo account.
 
 ### 3. Avvia il server
 
@@ -155,7 +153,7 @@ LG permette di installare app fuori dallo store solo con la sua **modalità svil
 
 | Messaggio nell'app | Cosa fare |
 |---|---|
-| Account Telegram non collegato | Esegui `python login.py` sul server e riavvialo. |
+| Account Telegram non collegato | ⚙️ Impostazioni → Account Telegram → Collega account (da casa). |
 | Nessuna diretta ora | Il canale non sta trasmettendo. Lo stato sul telecomando si aggiorna ogni 20 s. |
 | Diretta non leggibile | È una video chat dal telefono, non uno stream RTMP. |
 | ffmpeg non riesce a leggere i chunk | Controlla che `ffmpeg -version` funzioni nel terminale del server. Manda le ultime righe del terminale per capire il formato. |

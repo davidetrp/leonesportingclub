@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Leone Sporting Club</title>
-<meta name="theme-color" content="#0b1018">
+<meta name="theme-color" content="#000000">
+<script>try { if (localStorage.getItem("cs-theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}</script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Leone SC">
@@ -18,20 +19,18 @@
 <style>
 /* Layout: today's fixtures in a left rail (stacks below on phones), broadcast monitor + channel grid on the right */
 :root {
-  --bg: #eef1f5; --panel: #ffffff; --ink: #121a26; --muted: #5b6676; --line: #d5dbe4;
-  --accent: #d6411f; --accent-ink: #ffffff; --live: #e0262f; --star: #c98a00; --gold: #b67a00;
-  --screen: #0f1722; --screen-ink: #eef3fa; --screen-muted: #8c9bb0;
-  --ok: #1d7a4a; --warn: #a55a00;
+  --bg: #000000; --panel: #0c0f14; --ink: #e8edf4; --muted: #8f9aab; --line: #1d242f;
+  --accent: #ff6a3d; --accent-ink: #1a0b05; --live: #ff4a52; --star: #ffc53d; --gold: #f5b83d;
+  --screen: #05070a; --screen-ink: #eef3fa; --screen-muted: #7f8ea3; --ok: #4fc68a; --warn: #f0a640;
   --font-display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", sans-serif;
   --font-body: "Barlow", "Segoe UI", system-ui, sans-serif;
-  color-scheme: light;
+  color-scheme: dark;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b1018; --panel: #141c28; --ink: #e8edf4; --muted: #92a0b3; --line: #253144;
-    --accent: #ff6a3d; --accent-ink: #1a0b05; --live: #ff4a52; --star: #ffc53d; --gold: #f5b83d; --screen: #05080d; --screen-ink: #eef3fa;
-    --screen-muted: #7f8ea3; --ok: #4fc68a; --warn: #f0a640; color-scheme: dark;
-  }
+:root[data-theme="light"] {
+  --bg: #eef1f5; --panel: #ffffff; --ink: #121a26; --muted: #5b6676; --line: #d5dbe4;
+  --accent: #d6411f; --accent-ink: #ffffff; --live: #e0262f; --star: #c98a00; --gold: #b67a00;
+  --screen: #0f1722; --screen-ink: #eef3fa; --screen-muted: #8c9bb0; --ok: #1d7a4a; --warn: #a55a00;
+  color-scheme: light;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -204,7 +203,7 @@ body.tv .card .k { grid-area: k; font-size: 3.6vh; }
 body.tv .card .s { grid-area: s; font-size: 2.1vh; padding-right: 0; }
 body.tv .card .ev { grid-area: ev; font-size: 1.5vh; }
 body.tv .card .st { grid-area: st; font-size: 1.6vh; }
-body.tv .card.add, body.tv .star, body.tv #settings, body.tv #lgBox, body.tv footer, body.tv .guide-link { display: none !important; }
+body.tv .card.add, body.tv .star, body.tv #settings, body.tv footer, body.tv .guide-link { display: none !important; }
 body.tv .monitor { grid-area: monitor; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; border-radius: 1.4vh; }
 body.tv:not(.theater) .screen { aspect-ratio: auto; height: auto; min-height: 0; }
 body.tv .info { padding: 1.2vh 1.4vw 1.4vh; gap: 1.2vw; }
@@ -235,29 +234,90 @@ body.theater .screen { aspect-ratio: auto; height: 100vh; }
 body.theater .info { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(transparent, rgba(0,0,0,.75)); transition: opacity .4s; }
 body.theater.calm .info, body.theater.calm .ctrl { opacity: 0; }
 body.theater .ctrl { display: none !important; }
-/* ---- Splash d'apertura con il logo ---- */
-#splash { position: fixed; inset: 0; z-index: 200; display: grid; place-content: center; justify-items: center; gap: 2.6vh;
-  background: radial-gradient(circle at 50% 42%, #1c2a40 0, #0b1018 62%); color: #eef3fa; transition: opacity .6s ease, visibility .6s; }
+/* ---- Impostazioni: pannello a destra (a tutto schermo sul telefono) ---- */
+.sheet { position: fixed; inset: 0; z-index: 120; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+.sheet-back { background: rgba(0, 0, 0, .6); backdrop-filter: blur(3px); }
+.sheet-panel { width: min(460px, 100vw); height: 100%; overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line);
+  padding: calc(env(safe-area-inset-top, 0px) + 18px) 20px calc(env(safe-area-inset-bottom, 0px) + 28px); display: grid; gap: 14px; align-content: start;
+  animation: sheet-in .28s cubic-bezier(.2, .8, .2, 1); overscroll-behavior: contain; }
+@keyframes sheet-in { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.sheet-head h2 { font-family: var(--font-display); font-weight: 900; font-size: 1.9rem; text-transform: uppercase; letter-spacing: .02em; margin: 0; }
+.set-sec { display: grid; gap: 10px; padding: 14px 0 16px; border-top: 1px solid var(--line); }
+.set-sec h3 { margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 1.15rem; text-transform: uppercase; letter-spacing: .06em; color: var(--gold); }
+.set-val { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 3px; justify-self: start; }
+.seg button { appearance: none; border: 0; background: transparent; color: var(--muted); font: inherit; font-weight: 600; padding: 7px 16px; border-radius: 999px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.acct { display: flex; gap: 12px; align-items: center; }
+.avatar { width: 44px; height: 44px; border-radius: 50%; flex: none; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 22%, var(--panel));
+  color: var(--accent); font-family: var(--font-display); font-weight: 900; font-size: 1.4rem; }
+.acct div { display: grid; min-width: 0; }
+.acct span:not(.avatar) { color: var(--muted); font-size: .88rem; overflow-wrap: anywhere; }
+.acct .dotline::before { content: "● "; color: var(--ok); }
+.acct .dotline.off::before { color: var(--live); }
+.set-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.set-item b { display: block; }
+.set-item .note { font-size: .84rem; }
+.switch { appearance: none; border: 0; cursor: pointer; width: 54px; height: 32px; border-radius: 99px; background: var(--line); position: relative; flex: none; }
+.switch::after { content: ""; position: absolute; top: 4px; left: 4px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.switch[aria-checked="true"] { background: var(--ok); }
+.switch[aria-checked="true"]::after { transform: translateX(22px); }
+.switch:disabled, .btn:disabled { opacity: .45; cursor: not-allowed; }
+.sub-box { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--bg) 55%, var(--panel)); }
+.set-btn { white-space: nowrap; }
+body.tv .sheet-panel { width: 42vw; padding: 3vh 2vw; gap: 1.4vh; }
+body.tv .sheet-head h2 { font-size: 3.4vh; }
+body.tv .set-sec { gap: 1.1vh; padding: 1.4vh 0 1.6vh; }
+body.tv .set-sec h3 { font-size: 2.1vh; }
+body.tv .sheet .note, body.tv .acct span:not(.avatar), body.tv .set-item .note, body.tv .sheet label { font-size: 1.6vh; }
+body.tv .sheet .btn, body.tv .seg button, body.tv .sheet .mini { font-size: 1.9vh; padding: 1vh 1.4vw; }
+body.tv .sheet input { font-size: 2vh; padding: 1.1vh 1vw; }
+body.tv .set-val, body.tv .acct b, body.tv .set-item b { font-size: 2vh; }
+body.tv .avatar { width: 5.4vh; height: 5.4vh; font-size: 2.6vh; }
+body.tv .switch { width: 6.4vh; height: 3.8vh; }
+body.tv .switch::after { width: 2.8vh; height: 2.8vh; top: .5vh; left: .5vh; }
+body.tv .switch[aria-checked="true"]::after { transform: translateX(2.6vh); }
+body.tv .sheet .tvfocus { outline-offset: .3vh; }
+@media (max-width: 520px) { .sheet { grid-template-columns: 1fr; } .sheet-back { display: none; } .sheet-panel { width: 100vw; border-left: 0; } }
+/* ---- Splash: campo visto dal drone, tiro in porta, poi il logo ---- */
+#splash { position: fixed; inset: 0; z-index: 200; display: grid; place-content: center; justify-items: center; gap: 2.6vh; overflow: hidden;
+  background: #000; color: #eef3fa; transition: opacity .7s ease, visibility .7s; }
 #splash.gone { opacity: 0; visibility: hidden; pointer-events: none; }
-.sp-logo { width: min(30vh, 46vw); height: auto; animation: sp-in .9s cubic-bezier(.2, .9, .3, 1.25) both; filter: drop-shadow(0 1.6vh 3vh rgba(255, 106, 61, .25)); }
+#spField { position: absolute; inset: 0; width: 100%; height: 100%; transition: opacity 1s ease, transform 1.6s cubic-bezier(.2, .7, .2, 1); }
+#splash.goal #spField { opacity: .28; transform: scale(1.08); }
+.sp-flash { position: absolute; inset: 0; background: radial-gradient(circle at 50% 46%, rgba(255, 220, 150, .55), transparent 55%); opacity: 0; pointer-events: none; }
+#splash.goal .sp-flash { animation: sp-flash .9s ease-out both; }
+.sp-front { position: relative; display: grid; justify-items: center; gap: 2.6vh; visibility: hidden; }
+#splash.goal .sp-front { visibility: visible; }
+.sp-logo { width: min(30vh, 46vw); height: auto; filter: drop-shadow(0 1.6vh 3vh rgba(255, 106, 61, .3)); opacity: 0; }
 .sp-mane { transform-box: fill-box; transform-origin: center; animation: sp-spin 9s linear infinite; }
 .sp-glow { position: absolute; width: min(56vh, 90vw); aspect-ratio: 1; border-radius: 50%; top: 50%; left: 50%; translate: -50% -62%;
-  background: radial-gradient(circle, rgba(245, 184, 61, .22), transparent 62%); animation: sp-pulse 2.2s ease-in-out infinite; }
+  background: radial-gradient(circle, rgba(245, 184, 61, .22), transparent 62%); opacity: 0; }
 .sp-word { font-family: var(--font-display); font-weight: 900; font-size: min(7.5vh, 12vw); line-height: .9; text-transform: uppercase;
-  color: #f5b83d; display: grid; justify-items: center; animation: sp-up .7s .3s both; letter-spacing: .03em; }
+  color: #f5b83d; display: grid; justify-items: center; letter-spacing: .03em; opacity: 0; text-shadow: 0 .4vh 2vh rgba(0, 0, 0, .8); }
 .sp-word small { font-size: .36em; letter-spacing: .3em; color: #eef3fa; margin-top: .6vh; }
-.sp-bar { width: min(22vh, 40vw); height: .5vh; min-height: 3px; border-radius: 99px; background: rgba(255, 255, 255, .1); overflow: hidden; animation: sp-up .6s .5s both; }
+.sp-bar { width: min(22vh, 40vw); height: .5vh; min-height: 3px; border-radius: 99px; background: rgba(255, 255, 255, .12); overflow: hidden; opacity: 0; }
 .sp-bar::after { content: ""; display: block; height: 100%; width: 40%; border-radius: inherit; background: #ff6a3d; animation: sp-load 1.1s ease-in-out infinite alternate; }
-@keyframes sp-in { from { opacity: 0; transform: scale(.6) rotate(-8deg); } to { opacity: 1; transform: none; } }
+#splash.goal .sp-logo { animation: sp-in .9s cubic-bezier(.2, .9, .3, 1.25) both; }
+#splash.goal .sp-glow { animation: sp-fade .8s both, sp-pulse 2.2s .8s ease-in-out infinite; }
+#splash.goal .sp-word { animation: sp-up .7s .3s both; }
+#splash.goal .sp-bar { animation: sp-up .6s .6s both; }
+@keyframes sp-in { from { opacity: 0; transform: scale(.4) rotate(-10deg); } to { opacity: 1; transform: none; } }
 @keyframes sp-up { from { opacity: 0; transform: translateY(2vh); } to { opacity: 1; transform: none; } }
+@keyframes sp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sp-flash { 0% { opacity: 0; } 15% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes sp-spin { to { transform: rotate(360deg); } }
 @keyframes sp-pulse { 50% { opacity: .55; scale: 1.08; } }
 @keyframes sp-load { from { transform: translateX(-20%); } to { transform: translateX(170%); } }
-@media (prefers-reduced-motion: reduce) { #splash *, #splash *::after { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { #splash *, #splash *::after { animation: none !important; } #splash .sp-logo, #splash .sp-word, #splash .sp-bar, #splash .sp-glow { opacity: 1; } }
 </style>
 </head>
 <body>
 <div id="splash" aria-hidden="true">
+  <canvas id="spField"></canvas>
+  <div class="sp-flash"></div>
+  <div class="sp-front">
   <div class="sp-glow"></div>
   <svg class="sp-logo" viewBox="0 0 512 512"><path d="M256 34 L446 96 V246 C446 362 364 446 256 482 C148 446 66 362 66 246 V96 Z" fill="#141c28" stroke="#f5b83d" stroke-width="16" stroke-linejoin="round"/>
   <polygon class="sp-mane" points="256.0,112.0 280.9,152.8 321.1,126.9 325.8,174.4 373.3,168.5 356.9,213.4 402.2,228.6 368.0,262.0 402.2,295.4 356.9,310.6 373.3,355.5 325.8,349.6 321.1,397.1 280.9,371.2 256.0,412.0 231.1,371.2 190.9,397.1 186.2,349.6 138.7,355.5 155.1,310.6 109.8,295.4 144.0,262.0 109.8,228.6 155.1,213.4 138.7,168.5 186.2,174.4 190.9,126.9 231.1,152.8" fill="#ff6a3d"/>
@@ -273,11 +333,154 @@ body.theater .ctrl { display: none !important; }
   <path d="M256 170 L256 236" stroke="#d99a1e" stroke-width="5" stroke-linecap="round"/></svg>
   <div class="sp-word">Leone<small>Sporting Club</small></div>
   <div class="sp-bar"></div>
+  </div>
 </div>
+<script>
+/* Splash: un campo di notte visto da un drone che si alza mentre un giocatore calcia il pallone in porta. Tutto disegnato qui. */
+(function () {
+  "use strict";
+  var sp = document.getElementById("splash"), cv = document.getElementById("spField");
+  var GOAL_AT = 2350;                              // ms: il pallone entra in porta e compare il logo
+  function goal() { sp.classList.add("goal"); }
+  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var ctx = cv && cv.getContext && cv.getContext("2d");
+  if (!ctx || reduce) { goal(); return; }
+
+  var L = 105, W = 68;                             // misure del campo in metri
+  var KICK = { x: 63, y: 41 }, NET = { x: 106.4, y: 32.6 }, CURVE = { x: 92, y: 49 };
+  var RUN0 = { x: 54.5, y: 47.5 }, KICK_AT = 760, LAND_AT = 2150;
+  var dpr = Math.min(window.devicePixelRatio || 1, 1.5), w = 0, h = 0, t0 = 0, trail = [];
+
+  function size() { w = innerWidth; h = innerHeight; cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  size(); addEventListener("resize", size);
+  function lerp(a, b, k) { return a + (b - a) * k; }
+  function clamp(k) { return k < 0 ? 0 : k > 1 ? 1 : k; }
+  function easeInOut(k) { return k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; }
+  function easeOut(k) { return 1 - Math.pow(1 - k, 3); }
+  function bez(a, c, b, k) { var m = 1 - k; return { x: m * m * a.x + 2 * m * k * c.x + k * k * b.x, y: m * m * a.y + 2 * m * k * c.y + k * k * b.y }; }
+
+  function ballAt(t) {                             // posizione, altezza (0–1) e giri del pallone al tempo t
+    if (t < KICK_AT) return { x: KICK.x, y: KICK.y, z: 0, spin: 0 };
+    var k = clamp((t - KICK_AT) / (LAND_AT - KICK_AT)), e = easeOut(k * .92 + k * .08);
+    var p = bez(KICK, CURVE, NET, e);
+    if (t > LAND_AT) {                             // dentro la rete: rallenta e si ferma
+      var s = easeOut(clamp((t - LAND_AT) / 500));
+      p = { x: NET.x + 1.1 * s, y: NET.y - .4 * s };
+    }
+    return { x: p.x, y: p.y, z: Math.sin(Math.PI * Math.min(e, 1)) * .9, spin: (t - KICK_AT) / 1000 * 13 };
+  }
+  function playerAt(t) {
+    var k = clamp(t / KICK_AT), e = easeInOut(k);
+    var x = lerp(RUN0.x, KICK.x - 1.1, e), y = lerp(RUN0.y, KICK.y + .9, e);
+    if (t > KICK_AT) { var f = easeOut(clamp((t - KICK_AT) / 700)); x += f * 2.4; y -= f * 1.2; }
+    return { x: x, y: y, ang: Math.atan2(KICK.y - RUN0.y, KICK.x - RUN0.x), stride: t < KICK_AT + 500 ? Math.sin(t / 55) : 0,
+             kick: t > KICK_AT - 90 && t < KICK_AT + 220 };
+  }
+  function camera(t) {                             // il drone parte basso sul giocatore e si alza fino a vedere tutto il campo
+    var fit = Math.min(w / (L + 14), h / (W + 12));
+    var k = easeInOut(clamp(t / 2600));
+    var b = ballAt(t), focus = t < KICK_AT ? KICK : b;
+    return { z: fit * lerp(4.2, 1.22, k), x: lerp(focus.x, 61, k), y: lerp(focus.y, W / 2, k),
+             r: lerp(-.42, -.06, k) + Math.sin(t / 900) * .012 };
+  }
+
+  function pitch() {
+    ctx.fillStyle = "#0c3119"; ctx.fillRect(-60, -60, L + 120, W + 120);
+    for (var i = 0; i < 18; i++) { ctx.fillStyle = i % 2 ? "#0f3f22" : "#11482a"; ctx.fillRect(-12 + i * (L + 24) / 18, -10, (L + 24) / 18 + .05, W + 20); }
+    ctx.strokeStyle = "rgba(255,255,255,.78)"; ctx.lineWidth = .14; ctx.lineJoin = "round";
+    ctx.strokeRect(0, 0, L, W);
+    ctx.beginPath(); ctx.moveTo(L / 2, 0); ctx.lineTo(L / 2, W); ctx.stroke();
+    ctx.beginPath(); ctx.arc(L / 2, W / 2, 9.15, 0, Math.PI * 2); ctx.stroke();
+    [0, 1].forEach(function (side) {
+      var x0 = side ? L : 0, d = side ? -1 : 1;
+      ctx.strokeRect(Math.min(x0, x0 + d * 16.5), W / 2 - 20.16, 16.5, 40.32);
+      ctx.strokeRect(Math.min(x0, x0 + d * 5.5), W / 2 - 9.16, 5.5, 18.32);
+      ctx.beginPath(); ctx.arc(x0 + d * 11, W / 2, 9.15, side ? Math.PI - .93 : -.93, side ? Math.PI + .93 : .93, false);
+      ctx.save(); ctx.beginPath(); ctx.rect(side ? 0 : 16.5, 0, L - 16.5, W); ctx.clip();
+      ctx.beginPath(); ctx.arc(x0 + d * 11, W / 2, 9.15, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+      ctx.fillStyle = "rgba(255,255,255,.85)";
+      ctx.beginPath(); ctx.arc(x0 + d * 11, W / 2, .25, 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.beginPath(); ctx.arc(L / 2, W / 2, .3, 0, Math.PI * 2); ctx.fill();
+  }
+  function net(t) {                                // porta di destra con la rete che si gonfia quando entra il pallone
+    var bulge = t > LAND_AT ? Math.sin(clamp((t - LAND_AT) / 650) * Math.PI) * 1.3 : 0;
+    var y0 = W / 2 - 3.66, y1 = W / 2 + 3.66, back = L + 2.2;
+    ctx.fillStyle = "rgba(255,255,255,.06)";
+    ctx.beginPath(); ctx.moveTo(L, y0); ctx.lineTo(back, y0); ctx.quadraticCurveTo(back + bulge * 2, NET.y, back, y1); ctx.lineTo(L, y1); ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,.28)"; ctx.lineWidth = .06;
+    for (var i = 1; i < 10; i++) { var yy = lerp(y0, y1, i / 10); ctx.beginPath(); ctx.moveTo(L, yy); ctx.lineTo(back + bulge * Math.exp(-Math.pow((yy - NET.y) / 2.2, 2)), yy); ctx.stroke(); }
+    for (var j = 1; j < 4; j++) { var xx = lerp(L, back, j / 4); ctx.beginPath(); ctx.moveTo(xx, y0); ctx.quadraticCurveTo(xx + bulge * (j / 4) * 2, NET.y, xx, y1); ctx.stroke(); }
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = .24;
+    ctx.beginPath(); ctx.moveTo(L, y0); ctx.lineTo(back, y0); ctx.quadraticCurveTo(back + bulge * 2, NET.y, back, y1); ctx.lineTo(L, y1); ctx.stroke();
+    // l'altra porta
+    ctx.strokeStyle = "rgba(255,255,255,.6)"; ctx.strokeRect(-2.2, y0, 2.2, 7.32);
+  }
+  function player(t) {
+    var p = playerAt(t);
+    ctx.save(); ctx.translate(p.x, p.y);
+    ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.beginPath(); ctx.ellipse(.5, .45, .75, .45, p.ang, 0, Math.PI * 2); ctx.fill();
+    ctx.rotate(p.ang);
+    ctx.fillStyle = "#151a22";                     // gambe che corrono, una tesa nel tiro
+    var legA = p.kick ? .95 : p.stride * .45, legB = p.kick ? -.25 : -p.stride * .45;
+    ctx.beginPath(); ctx.ellipse(legA, -.22, .32, .13, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(legB, .22, .32, .13, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ff6a3d"; ctx.beginPath(); ctx.ellipse(0, 0, .3, .58, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#f5b83d"; ctx.fillRect(-.06, -.5, .12, 1);
+    ctx.fillStyle = "#2a1a10"; ctx.beginPath(); ctx.arc(.04, 0, .2, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  function ball(t) {
+    var b = ballAt(t), r = .34 * (1 + b.z * 1.4);
+    trail.push({ x: b.x, y: b.y, z: b.z }); if (trail.length > 16) trail.shift();
+    if (t > KICK_AT && t < LAND_AT + 200) {
+      for (var i = 1; i < trail.length; i++) {
+        ctx.strokeStyle = "rgba(255,230,190," + (i / trail.length * .35) + ")"; ctx.lineWidth = .22 * (1 + trail[i].z);
+        ctx.beginPath(); ctx.moveTo(trail[i - 1].x, trail[i - 1].y); ctx.lineTo(trail[i].x, trail[i].y); ctx.stroke();
+      }
+    }
+    ctx.fillStyle = "rgba(0,0,0," + (.4 - b.z * .25) + ")";      // ombra: si stacca quando il pallone sale
+    ctx.beginPath(); ctx.ellipse(b.x + b.z * 2.4 + .12, b.y + b.z * 1.6 + .12, .34 * (1 + b.z * .5), .3 * (1 + b.z * .5), 0, 0, Math.PI * 2); ctx.fill();
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.spin);
+    ctx.fillStyle = "#fbfbf7"; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    ctx.clip();
+    ctx.fillStyle = "#151a22";
+    for (var k = 0; k < 6; k++) {
+      var cx = k ? Math.cos(k * 1.2566) * r * .95 : 0, cy = k ? Math.sin(k * 1.2566) * r * .95 : 0, rr = r * (k ? .3 : .36);
+      ctx.beginPath();
+      for (var v = 0; v < 5; v++) { var a = v * 1.2566 + k * .63 - Math.PI / 2; ctx[v ? "lineTo" : "moveTo"](cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.fillStyle = "rgba(255,255,255,.35)"; ctx.beginPath(); ctx.arc(b.x - r * .35, b.y - r * .35, r * .3, 0, Math.PI * 2); ctx.fill();
+  }
+
+  var shown = false;
+  function frame(now) {
+    if (!t0) t0 = now;
+    var t = now - t0;
+    if (sp.classList.contains("gone")) return;
+    var c = camera(t);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h);
+    ctx.save();
+    ctx.translate(w / 2, h / 2); ctx.rotate(c.r); ctx.scale(c.z, c.z); ctx.translate(-c.x, -c.y);
+    pitch(); net(t); player(t); ball(t);
+    ctx.restore();
+    var g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * .25, w / 2, h / 2, Math.max(w, h) * .75);
+    g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,.85)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    if (!shown && t >= GOAL_AT) { shown = true; goal(); }
+    if (t < 6000) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  setTimeout(function () { if (!shown) { shown = true; goal(); } }, GOAL_AT + 1500);   // se i frame si bloccano
+})();
+</script>
 <div class="page">
   <header>
     <h1 class="brand"><img src="/static/logo.svg" alt="" width="56" height="56"><span>Leone<small>Sporting Club</small></span></h1>
-    <div class="head-right"><a class="toggle guide-link" href="/guida">📺 Guida TV</a><span class="hint" id="topHint">Tasti 1–9 per cambiare canale</span></div>
+    <div class="head-right"><a class="toggle guide-link" href="/guida">📺 Guida TV</a><button class="toggle" id="setBtn" type="button" aria-haspopup="dialog" aria-controls="sheet">⚙️ Impostazioni</button><span class="hint" id="topHint">Tasti 1–9 per cambiare canale</span></div>
   </header>
 
   <section class="box" id="loginCard" hidden>
@@ -359,23 +562,83 @@ body.theater .ctrl { display: none !important; }
         </form>
       </details>
 
-      <details id="lgBox">
-        <summary>Installa su TV LG</summary>
-        <form class="form" id="lgForm">
-          <p class="note">Sulla TV apri l'app <b>Developer Mode</b> con «Key Server» su ON, poi copia qui IP e passphrase. Il server deve essere nella stessa rete della TV.</p>
-          <div class="row">
-            <label for="lgIp" style="flex:1 1 160px">IP della TV <input type="text" id="lgIp" inputmode="decimal" placeholder="192.168.0.199" autocomplete="off"></label>
-            <label for="lgPass" style="flex:1 1 120px">Passphrase <input type="text" id="lgPass" placeholder="DBBB36" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
-          </div>
-          <div class="row"><button class="btn" type="submit" id="lgBtn">Installa</button></div>
-          <ol class="steps" id="lgSteps" hidden></ol>
-          <p class="note" id="lgNote"></p>
-        </form>
-      </details>
-
       <footer id="foot">I canali sono ordinati per spettatori e si aggiornano ogni 20 secondi. Con ★ fissi in cima quelli che preferisci, su questo dispositivo.</footer>
     </div>
   </div>
+</div>
+
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden>
+  <div class="sheet-back" id="sheetBack"></div>
+  <section class="sheet-panel">
+    <div class="sheet-head"><h2 id="sheetTitle">Impostazioni</h2><button class="mini" id="sheetClose" type="button">Chiudi</button></div>
+    <p class="note bad" id="homeOnly" hidden>Sei fuori casa: puoi cambiare tema e server. Account, sblocchi e TV si cambiano dalla Wi-Fi di casa.</p>
+
+    <div class="set-sec">
+      <h3>Tema</h3>
+      <div class="seg" role="group" aria-label="Tema"><button type="button" data-theme="dark">⚫ Scuro</button><button type="button" data-theme="light">⚪ Chiaro</button></div>
+    </div>
+
+    <div class="set-sec">
+      <h3>Server</h3>
+      <p class="set-val" id="srvNow"></p>
+      <p class="note" id="srvNote"></p>
+      <form class="row" id="srvForm" hidden>
+        <input type="url" id="srvInput" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://nome.ts.net" style="flex:1 1 200px" aria-label="Indirizzo del nuovo server">
+        <button class="btn ghost set-btn" type="submit">Apri</button>
+      </form>
+      <button class="btn ghost" id="srvApp" type="button" hidden style="justify-self:start">Cambia server</button>
+    </div>
+
+    <div class="set-sec">
+      <h3>Account Telegram</h3>
+      <div class="acct"><span class="avatar" id="acAv">?</span><div><b id="acName">…</b><span id="acSub"></span></div></div>
+      <button class="btn ghost home" id="acChange" type="button" style="justify-self:start">Cambia account</button>
+      <form class="sub-box" id="acForm" hidden autocomplete="off">
+        <label for="acPhone" id="acPhoneL">Numero di telefono dell'account
+          <input type="tel" id="acPhone" inputmode="tel" placeholder="+39 333 1234567"></label>
+        <label for="acCode" id="acCodeL" hidden>Codice arrivato nell'app Telegram
+          <input type="text" id="acCode" inputmode="numeric" placeholder="12345" maxlength="8"></label>
+        <label for="acPw" id="acPwL" hidden>Password della verifica in due passaggi
+          <input type="password" id="acPw" autocomplete="current-password"></label>
+        <div class="row"><button class="btn" type="submit" id="acGo">Invia codice</button><button class="btn ghost" type="button" id="acCancel">Annulla</button></div>
+        <p class="note" id="acNote">Il codice arriva come messaggio da «Telegram» nell'app, sul telefono dove l'account è già aperto.</p>
+      </form>
+    </div>
+
+    <div class="set-sec">
+      <h3>Sblocchi</h3>
+      <div class="set-item">
+        <div><b>Lista eventi dal bot</b><span class="note">Mostra le partite del bot accanto a quelle di oggi, con i canali per guardarle.</span></div>
+        <button class="switch home" id="botSwitch" type="button" role="switch" aria-checked="false" aria-label="Lista eventi dal bot"></button>
+      </div>
+      <div class="sub-box" id="botBox" hidden>
+        <label for="botName">Bot <input type="text" id="botName" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="@CherryStreamingDbot"></label>
+        <div class="row"><button class="btn ghost home" type="button" id="botSave">Salva bot</button><button class="btn home" type="button" id="setUnlock">Sblocca lista</button></div>
+        <ol class="steps" id="setSteps" hidden></ol>
+        <div class="manual" id="setManual" hidden></div>
+        <p class="note" id="botNote"></p>
+      </div>
+      <div class="set-item">
+        <div><b>App sulla TV LG</b><span class="note">La installa il server sulla TV, senza computer.</span></div>
+        <button class="btn ghost home set-btn" id="lgOpen" type="button">Installa</button>
+      </div>
+      <form class="sub-box" id="lgForm" hidden>
+        <p class="note">Sulla TV apri l'app <b>Developer Mode</b> con «Key Server» su ON, poi copia qui IP e passphrase. Il Mac deve essere nella stessa rete della TV.</p>
+        <div class="row">
+          <label for="lgIp" style="flex:1 1 150px">IP della TV <input type="text" id="lgIp" inputmode="decimal" placeholder="192.168.0.199" autocomplete="off"></label>
+          <label for="lgPass" style="flex:1 1 110px">Passphrase <input type="text" id="lgPass" placeholder="DBBB36" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+        </div>
+        <div class="row"><button class="btn home" type="submit" id="lgBtn">Installa</button></div>
+        <ol class="steps" id="lgSteps" hidden></ol>
+        <p class="note" id="lgNote"></p>
+      </form>
+      <div class="set-item">
+        <div><b>App per Fire TV Stick</b><span class="note">Con Downloader: scrivi l'indirizzo qui accanto.</span></div>
+        <a class="btn ghost set-btn" id="fireLink" href="/guida" style="text-decoration:none">Guida</a>
+      </div>
+    </div>
+    <p class="note" style="font-size:.78rem">Leone Sporting Club · tema, preferiti e server sono salvati su questo dispositivo.</p>
+  </section>
 </div>
 
 <script>
@@ -390,11 +653,11 @@ body.theater .ctrl { display: none !important; }
   var hls = null, playing = false, statusTimer = null, tuneToken = 0, tgChannels = null, delArmed = false;
   var nameTouched = false;    // true se il nome è stato scritto a mano
   var canEdit = true;         // false quando apri il sito da fuori casa: niente modifiche ai canali
-  var splashT0 = Date.now();
+  var splashT0 = Date.now(), SPLASH_MS = 4600;   // tiro + logo: lo splash resta almeno 4,6 s
   function hideSplash() {
-    setTimeout(function () { var sp = $("splash"); if (sp) sp.classList.add("gone"); }, Math.max(0, 1400 - (Date.now() - splashT0)));
+    setTimeout(function () { var sp = $("splash"); if (sp) sp.classList.add("gone"); }, Math.max(0, SPLASH_MS - (Date.now() - splashT0)));
   }
-  setTimeout(hideSplash, 6000);
+  setTimeout(hideSplash, 9000);
 
   function store(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
   function load(k, d) { try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
@@ -443,7 +706,6 @@ body.theater .ctrl { display: none !important; }
       channels = r.channels || [];
       canEdit = r.can_edit !== false;
       $("settings").hidden = !canEdit;
-      $("lgBox").hidden = !canEdit;
       $("app").hidden = false;
       $("topHint").innerHTML = r.demo ? '<span class="demo-badge">Demo</span>' : "Tasti 1–9 per cambiare canale";
       if (r.telegram_error) $("foot").textContent = r.telegram_error;
@@ -736,29 +998,40 @@ body.theater .ctrl { display: none !important; }
   }
   var unlockArmed = false;
   function joinList(label, arr) { return arr && arr.length ? label + ": " + arr.join(", ") : ""; }
-  $("unlockBtn").addEventListener("click", function () {
-    var btn = $("unlockBtn");
+  function unlockNote(t) { evNote(t); botNote(t); }
+  function armUnlock(btn) {
+    if (!canEdit) { unlockNote("Lo sblocco si fa solo da casa, con il telefono sulla stessa Wi-Fi del Mac."); return; }
     if (!unlockArmed) {
       unlockArmed = true; btn.classList.add("armed"); btn.textContent = "Conferma";
-      evNote("Il server entrerà con il tuo account nei canali col pallino rosso. Se sei già dentro, ne esce e rientra dal link del bot, che è l'unico che il bot conta. Poi preme «Sblocca». Tocca «Conferma» per procedere.");
+      unlockNote("Il server entrerà con il tuo account nei canali col pallino rosso. Se sei già dentro, ne esce e rientra dal link del bot, che è l'unico che il bot conta. Poi preme «Sblocca». Tocca «Conferma» per procedere.");
       return;
     }
-    unlockArmed = false; btn.classList.remove("armed"); btn.disabled = true; btn.textContent = "Sblocco in corso…";
-    evNote(""); renderManual([]);
-    api("/api/events/unlock", { method: "POST" }).then(function (r) { showUnlock(r); pollUnlock(); }).catch(function () { resetUnlockBtn(); });
-  });
-  function resetUnlockBtn() { var b = $("unlockBtn"); b.disabled = false; b.textContent = "Sblocca"; }
+    unlockArmed = false;
+    [$("unlockBtn"), $("setUnlock")].forEach(function (b) { b.classList.remove("armed"); b.disabled = true; b.textContent = "Sblocco in corso…"; });
+    unlockNote(""); renderManual([]);
+    api("/api/events/unlock", { method: "POST" }).then(function (r) {
+      if (r.error) { unlockNote(r.error); resetUnlockBtn(); return; }
+      showUnlock(r); pollUnlock();
+    }).catch(function () { resetUnlockBtn(); });
+  }
+  $("unlockBtn").addEventListener("click", function () { armUnlock($("unlockBtn")); });
+  function resetUnlockBtn() {
+    $("unlockBtn").disabled = false; $("unlockBtn").textContent = "Sblocca";
+    $("setUnlock").disabled = !canEdit; $("setUnlock").textContent = "Sblocca lista";
+  }
   function showUnlock(r) {
-    var box = $("steps"); box.innerHTML = ""; box.hidden = !(r.steps && r.steps.length);
-    (r.steps || []).forEach(function (t, i) {
-      var li = document.createElement("li"); li.textContent = t;
-      if (r.running && i === r.steps.length - 1) li.className = "now";
-      box.appendChild(li);
+    ["steps", "setSteps"].forEach(function (id) {
+      var box = $(id); box.innerHTML = ""; box.hidden = !(r.steps && r.steps.length);
+      (r.steps || []).forEach(function (t, i) {
+        var li = document.createElement("li"); li.textContent = t;
+        if (r.running && i === r.steps.length - 1) li.className = "now";
+        box.appendChild(li);
+      });
     });
   }
   function pollUnlock() {
     api("/api/events/unlock").then(function (r) {
-      if (r.error) { evNote(r.error); resetUnlockBtn(); return; }
+      if (r.error) { unlockNote(r.error); resetUnlockBtn(); return; }
       showUnlock(r);
       if (r.running) { setTimeout(pollUnlock, 1000); return; }
       resetUnlockBtn();
@@ -767,17 +1040,19 @@ body.theater .ctrl { display: none !important; }
       var parts = [rep.manual && rep.manual.length && !rep.ok ? "Manca un passaggio da fare tu: apri il link qui sopra, poi tocca di nuovo Sblocca." : "",
         rep.message ? "Il bot dice: " + rep.message : "",
         !rep.ok && rep.buttons && rep.buttons.length ? "Bottoni del bot: " + rep.buttons.join(" | ") : ""];
-      evNote(parts.filter(Boolean).join(" · "));
+      unlockNote(parts.filter(Boolean).join(" · ") || (rep.ok ? "Lista sbloccata." : ""));
       loadEvents().then(function () { refresh().catch(function () {}); });
     }).catch(function () { setTimeout(pollUnlock, 2000); });
   }
   function renderManual(list) {
-    var box = $("manual"); box.innerHTML = ""; box.hidden = !list.length;
-    if (!list.length) return;
-    var p = document.createElement("p"); p.textContent = "Questi passaggi li devi fare tu (si aprono in una nuova scheda):"; box.appendChild(p);
-    list.forEach(function (m) {
-      var a = document.createElement("a"); a.className = "watch join"; a.href = m.url; a.target = "_blank"; a.rel = "noopener";
-      a.textContent = (m.text || "Apri il link").replace(/[🔴✅🔒]/g, "").trim() || "Apri il link"; box.appendChild(a);
+    ["manual", "setManual"].forEach(function (id) {
+      var box = $(id); box.innerHTML = ""; box.hidden = !list.length;
+      if (!list.length) return;
+      var p = document.createElement("p"); p.textContent = "Questi passaggi li devi fare tu (si aprono in una nuova scheda):"; box.appendChild(p);
+      list.forEach(function (m) {
+        var a = document.createElement("a"); a.className = "watch join"; a.href = m.url; a.target = "_blank"; a.rel = "noopener";
+        a.textContent = (m.text || "Apri il link").replace(/[🔴✅🔒]/g, "").trim() || "Apri il link"; box.appendChild(a);
+      });
     });
   }
   function loadEvents(refreshBot) {
@@ -856,14 +1131,10 @@ body.theater .ctrl { display: none !important; }
   var TV = /[?&]tv=1/.test(location.search) || /Web0S|webOS|NetCast|AFT[A-Z]|CanaliSportTV|SmartTV|BRAVIA|Tizen/i.test(navigator.userAgent);
   try { if (TV) sessionStorage.setItem("cs-tv", "1"); else if (sessionStorage.getItem("cs-tv") === "1") TV = true; } catch (e) {}
   if (TV) { document.body.classList.add("tv"); document.documentElement.classList.add("tv"); }
-  if (window.CanaliTV && CanaliTV.openSetup) {          // app Fire TV: tasto per cambiare server
-    var cs = document.createElement("button");
-    cs.type = "button"; cs.className = "toggle"; cs.textContent = "Cambia server";
-    cs.addEventListener("click", function () { CanaliTV.openSetup(); });
-    document.querySelector(".head-right").appendChild(cs);
-  }
   var tvFocused = null, calmTimer = null;
   function focusables() {
+    if (!$("sheet").hidden) return Array.prototype.filter.call($("sheet").querySelectorAll("button, input, a.btn"),
+      function (el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !el.disabled && !el.closest("[hidden]"); });
     return Array.prototype.filter.call(document.querySelectorAll(
       ".card, #fixtures .fx, #events .watch, #unlockBtn, .head-right .toggle, #settings summary, #settings[open] select, #settings[open] input, #settings[open] .btn:not([hidden]), #favToggle, #loginForm input, #loginForm .btn"),
       function (el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !el.closest("[hidden]"); });
@@ -910,6 +1181,7 @@ body.theater .ctrl { display: none !important; }
   // Tasto Indietro: true se gestito dalla pagina, false se l'app può chiudersi (usato anche dall'app Fire TV).
   window.tvBack = function () {
     if (document.body.classList.contains("theater")) { theater(false); tvFocus(document.getElementById("ch-" + currentId)); return true; }
+    if (!$("sheet").hidden) { closeSheet(); return true; }
     if ($("settings").open) { $("settings").open = false; return true; }
     return false;
   };
@@ -923,6 +1195,7 @@ body.theater .ctrl { display: none !important; }
       return;
     }
     var typing = t === "INPUT" || t === "TEXTAREA" || (t === "SELECT" && !TV);
+    if (!TV && !$("sheet").hidden) return;           // con le impostazioni aperte i tasti non cambiano canale
     if (typing && !(TV && (key === "ArrowUp" || key === "ArrowDown") && t === "INPUT")) return;
     if (key >= "1" && key <= "9") { var c = order[Number(key) - 1]; if (c) tune(c.id); return; }
     if (key === "ChannelUp" || key === "PageUp" || code === 33 || code === 427) { e.preventDefault(); step(-1); return; }
@@ -951,8 +1224,154 @@ body.theater .ctrl { display: none !important; }
         if (id === currentId) theater(true); else { tune(id); }
         return;
       }
+      if (el.tagName === "INPUT") { e.preventDefault(); el.focus(); return; }
       if (el.tagName === "SUMMARY" || el.tagName === "BUTTON" || el.classList.contains("add") || el.classList.contains("fx")) { e.preventDefault(); el.click(); }
     }
+  });
+
+  // ---------------------------------------------------------------- impostazioni
+  // APP: "webos" o "firetv" quando la pagina gira dentro le app TV (il cambio server passa dalla loro schermata iniziale).
+  var APP = "";
+  (function () {
+    var m = /[?&]app=(webos|tv)\b/.exec(location.search);
+    try { if (m) sessionStorage.setItem("cs-app", m[1]); APP = m ? m[1] : sessionStorage.getItem("cs-app") || ""; } catch (e) { APP = m ? m[1] : ""; }
+    if (window.CanaliTV && CanaliTV.openSetup) APP = "firetv";
+  })();
+  var settingsData = null;
+
+  function setTheme(t) {
+    if (t === "light") document.documentElement.dataset.theme = "light"; else delete document.documentElement.dataset.theme;
+    try { localStorage.setItem("cs-theme", t); } catch (e) {}
+    var meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = t === "light" ? "#eef1f5" : "#000000";
+    Array.prototype.forEach.call(document.querySelectorAll(".seg [data-theme]"), function (b) { b.setAttribute("aria-pressed", String(b.dataset.theme === t)); });
+  }
+  setTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark");
+  Array.prototype.forEach.call(document.querySelectorAll(".seg [data-theme]"), function (b) {
+    b.addEventListener("click", function () { setTheme(b.dataset.theme); });
+  });
+
+  function sheetOpen() { return !$("sheet").hidden; }
+  function openSheet() {
+    $("sheet").hidden = false;
+    loadSettings();
+    if (TV) tvFocus($("sheet").querySelector(".seg button[aria-pressed=true]") || $("sheetClose")); else $("sheetClose").focus();
+  }
+  function closeSheet() {
+    $("sheet").hidden = true;
+    if (TV) tvFocus($("setBtn")); else $("setBtn").focus();
+  }
+  $("setBtn").addEventListener("click", openSheet);
+  $("sheetClose").addEventListener("click", closeSheet);
+  $("sheetBack").addEventListener("click", closeSheet);
+
+  function loadSettings() { return api("/api/settings").then(renderSettings).catch(function () {}); }
+  function renderSettings(r) {
+    settingsData = r;
+    canEdit = r.can_edit !== false;
+    $("homeOnly").hidden = canEdit;
+    Array.prototype.forEach.call(document.querySelectorAll("#sheet .home"), function (b) { b.disabled = !canEdit; });
+    // Server
+    $("srvNow").textContent = location.host;
+    var inApp = APP === "firetv" || APP === "webos";
+    $("srvApp").hidden = !inApp; $("srvForm").hidden = inApp;
+    $("srvNote").textContent = inApp ? "L'app della TV si collega a questo indirizzo. «Cambia server» riapre la schermata per scriverne un altro."
+                                     : "Per passare a un altro server scrivi il suo indirizzo e tocca Apri.";
+    $("fireLink").closest(".set-item").hidden = TV;
+    // Account Telegram
+    var a = r.account || {};
+    $("acAv").textContent = a.connected ? ((a.name || "?").trim().charAt(0).toUpperCase() || "?") : "!";
+    $("acName").textContent = a.connected ? (a.name || "Account Telegram") : "Nessun account collegato";
+    $("acSub").textContent = a.connected ? (["Collegato", a.username ? "@" + a.username : "", a.phone].filter(Boolean).join(" · "))
+                                         : (a.error || "Collega un account per vedere i canali.");
+    $("acSub").className = "dotline" + (a.connected ? "" : " off");
+    $("acChange").textContent = a.connected ? "Cambia account" : "Collega account";
+    if (a.step && $("acForm").hidden && canEdit) acShow(a.step);
+    // Lista eventi dal bot
+    var on = !!r.events_bot;
+    $("botSwitch").setAttribute("aria-checked", String(on));
+    $("botBox").hidden = !on;
+    if (document.activeElement !== $("botName")) $("botName").value = "@" + (r.events_bot || r.suggested_bot);
+  }
+
+  // Server
+  function normalizeServer(v) {
+    v = (v || "").trim().replace(/\/+$/, "");
+    if (!v) return "";
+    if (!/^https?:\/\//i.test(v)) v = (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(v) || /:\d+$/.test(v) ? "http://" : "https://") + v;
+    return v;
+  }
+  $("srvForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var v = normalizeServer($("srvInput").value);
+    if (!v) { $("srvNote").textContent = "Scrivi l'indirizzo del server."; return; }
+    location.href = v + "/";
+  });
+  $("srvApp").addEventListener("click", function () {
+    if (window.CanaliTV && CanaliTV.openSetup) { CanaliTV.openSetup(); return; }
+    if (history.length > 1) { history.back(); return; }       // webOS: si torna alla schermata iniziale dell'app
+    $("srvNote").textContent = "Chiudi l'app e riaprila tenendo premuto OK sull'icona, oppure reinstallala.";
+  });
+
+  // Account Telegram: numero → codice → (password)
+  var acStep = "";
+  function acNote(t, cls) { $("acNote").className = "note" + (cls ? " " + cls : ""); $("acNote").textContent = t || ""; }
+  function acShow(step) {
+    acStep = step; $("acForm").hidden = false; $("acChange").hidden = true;
+    $("acPhoneL").hidden = step !== "phone"; $("acCodeL").hidden = step !== "code"; $("acPwL").hidden = step !== "password";
+    $("acGo").textContent = step === "phone" ? "Invia codice" : "Collega";
+    acNote(step === "phone" ? "Ti arriva un codice nell'app Telegram, sul telefono dove quell'account è già aperto."
+         : step === "code" ? "Scrivi il codice appena arrivato (messaggio da «Telegram»)."
+         : "L'account ha la verifica in due passaggi: scrivi la sua password.");
+    var f = step === "phone" ? $("acPhone") : step === "code" ? $("acCode") : $("acPw");
+    setTimeout(function () { if (TV) tvFocus(f); else f.focus(); }, 60);
+  }
+  function acHide() { acStep = ""; $("acForm").hidden = true; $("acChange").hidden = false; $("acCode").value = ""; $("acPw").value = ""; }
+  $("acChange").addEventListener("click", function () { acShow("phone"); });
+  $("acCancel").addEventListener("click", function () {
+    api("/api/account", { method: "POST", body: { action: "cancel" } }).catch(function () {});
+    acHide(); if (TV) tvFocus($("acChange"));
+  });
+  $("acForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (!acStep) return;
+    var body = acStep === "phone" ? { action: "send_code", phone: $("acPhone").value }
+             : acStep === "code" ? { action: "code", code: $("acCode").value } : { action: "password", password: $("acPw").value };
+    $("acGo").disabled = true; acNote(acStep === "phone" ? "Chiedo il codice a Telegram…" : "Accedo…");
+    api("/api/account", { method: "POST", body: body }).then(function (r) {
+      $("acGo").disabled = false;
+      if (r.error) { acNote(r.error, "bad"); if (/scaduto|Richiedi prima/.test(r.error)) setTimeout(function () { acShow("phone"); }, 1800); return; }
+      if (r.step) { acShow(r.step); return; }
+      if (r.ok) {
+        acHide(); tgChannels = null;
+        renderSettings(Object.assign({}, settingsData || {}, { account: r.account }));
+        $("acSub").textContent = "Fatto: ora sei collegato con questo account.";
+        refresh().catch(function () {}); loadEvents();
+        if (TV) tvFocus($("acChange"));
+      }
+    }).catch(function () { $("acGo").disabled = false; });
+  });
+
+  // Lista eventi dal bot
+  function botNote(t, cls) { $("botNote").className = "note" + (cls ? " " + cls : ""); $("botNote").textContent = t || ""; }
+  function saveBot(name) {
+    return api("/api/settings", { method: "POST", body: { events_bot: name } }).then(function (r) {
+      if (r.error) { botNote(r.error, "bad"); return; }
+      renderSettings(r); loadEvents(); refresh().catch(function () {});
+      botNote(r.events_bot ? "Lista attiva da @" + r.events_bot + "." : "Lista eventi spenta.", "good");
+    }).catch(function () {});
+  }
+  $("botSwitch").addEventListener("click", function () {
+    var on = $("botSwitch").getAttribute("aria-checked") === "true";
+    saveBot(on ? "" : ($("botName").value.trim() || "@" + ((settingsData && settingsData.suggested_bot) || "")));
+  });
+  $("botSave").addEventListener("click", function () { saveBot($("botName").value.trim()); });
+  $("setUnlock").addEventListener("click", function () { armUnlock($("setUnlock")); });
+
+  // TV LG
+  $("lgOpen").addEventListener("click", function () {
+    $("lgForm").hidden = !$("lgForm").hidden;
+    $("lgOpen").textContent = $("lgForm").hidden ? "Installa" : "Chiudi";
+    if (!$("lgForm").hidden) { lgPoll(); setTimeout(function () { if (TV) tvFocus($("lgIp")); else $("lgIp").focus(); }, 60); }
   });
 
   function boot() {
