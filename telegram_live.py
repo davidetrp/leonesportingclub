@@ -30,6 +30,7 @@ from chunks import CHUNK_MS, ChunkNotReady, NotLive, Resync, Unsupported  # noqa
 log = logging.getLogger("telegram_live")
 
 GETFILE_LIMIT = 128 * 1024      # come Telegram Desktop per i pezzi delle dirette
+FETCH_TIMEOUT_S = 8             # una richiesta di pezzo che non torna entro 8 s è persa: si riapre la connessione
 CHANNELS_MIN_GAP = 8.0
 _channels_lock = asyncio.Lock()
 _last_channels_call = 0.0
@@ -117,6 +118,12 @@ class TelegramLive:
             self._media_senders[dc_id] = sender
             return sender
 
+    def drop_sender(self, dc_id: int | None) -> None:
+        """Connessione allo stream caduta o bloccata: la chiudo, la prossima richiesta ne apre una nuova."""
+        sender = self._media_senders.pop(dc_id, None) if dc_id is not None else None
+        if sender is not None:
+            asyncio.ensure_future(sender.disconnect())
+
     async def _retry_flood(self, request, attempts: int = 3):
         for i in range(attempts):
             try:
@@ -140,6 +147,9 @@ class CallReader:
         self.quality = max(0, min(2, quality))
         self.info: LiveInfo | None = None
         self.ssrc = 0
+        self.quick = False
+        self._join_lock = asyncio.Lock()
+        self._joined_at = 0.0
 
     # -- helpers --------------------------------------------------------------------------
     async def _patient(self, call, max_wait: int = 90):
@@ -175,6 +185,19 @@ class CallReader:
 
     # -- lifecycle ------------------------------------------------------------------------
     async def join(self) -> None:
+        async with self._join_lock:
+            await self._join()
+
+    async def rejoin_if_stale(self, since: float) -> None:
+        """Rientra solo se nessun altro l'ha già fatto dopo `since`: con 4 pezzi scaricati in parallelo,
+        un «non sei nella diretta» arriva a tutti insieme, ma basta rientrare una volta."""
+        async with self._join_lock:
+            if self._joined_at > since:
+                return
+            log.info("Rientro nella diretta (Telegram dice che non ci sono)")
+            await self._join()
+
+    async def _join(self) -> None:
         info = await self.live.live_info(self.peer_id)
         if info is None:
             raise NotLive()
@@ -210,7 +233,8 @@ class CallReader:
         log.info("Entrato nella diretta %s: rtmp=%s, dc stream=%s, dc account=%s, modalità=%s",
                  self.peer_id, info.rtmp, info.dc_id, self.client.session.dc_id,
                  {k: v for k, v in mode.items() if k in ("stream", "rtmp")})
-        if not getattr(self, "quick", False):   # lettura di un solo fotogramma: niente controllo (risparmia 1 s)
+        self._joined_at = time.monotonic()
+        if not self.quick:                      # lettura di un solo fotogramma: niente controllo (risparmia 1 s)
             await self.verify_joined()
 
     async def verify_joined(self) -> bool:
@@ -228,9 +252,10 @@ class CallReader:
     async def rejoin(self) -> None:
         """Esce e rientra nella diretta: è quello che sblocca lo stream quando il primo ingresso non è valido."""
         log.info("Rientro nella diretta %s", self.peer_id)
-        await self.leave()
-        await asyncio.sleep(1.5)
-        await self.join()
+        async with self._join_lock:
+            await self.leave()
+            await asyncio.sleep(1.5)
+            await self._join()
 
     async def leave(self) -> None:
         if not self.info:
@@ -358,16 +383,24 @@ class CallReader:
         return lo
 
     async def fetch(self, time_ms: int, first_only: bool = False) -> bytes:
+        """Scarica il pezzo time_ms. Problemi passeggeri (rete, server lento, «aspetta») diventano
+        ChunkNotReady, così chi chiama riprova invece di fermare la diretta."""
         location = types.InputGroupCallStream(
             call=self.info.call, time_ms=time_ms, scale=0,
             video_channel=1, video_quality=self.quality,
         )
+        dc = (self.info.dc_id if self.info else None) or self.client.session.dc_id
         data = b""
         offset = 0
         while True:
+            started = time.monotonic()
             try:
-                res = await self._invoke_stream_dc(
-                    functions.upload.GetFileRequest(location=location, offset=offset, limit=GETFILE_LIMIT))
+                res = await asyncio.wait_for(self._invoke_stream_dc(
+                    functions.upload.GetFileRequest(location=location, offset=offset, limit=GETFILE_LIMIT)), FETCH_TIMEOUT_S)
+            except asyncio.TimeoutError as e:
+                log.info("Chunk %s: Telegram non risponde da %ss, riapro la connessione", time_ms, FETCH_TIMEOUT_S)
+                self.live.drop_sender(dc)
+                raise ChunkNotReady("TIMEOUT") from e
             except errors.FloodWaitError as e:
                 raise ChunkNotReady(f"FLOOD_WAIT_{e.seconds}") from e
             except errors.RPCError as e:
@@ -378,10 +411,15 @@ class CallReader:
                 if "TIME_TOO_BIG" in msg or "FLOOD" in msg:
                     raise ChunkNotReady(msg) from e
                 if "GROUPCALL_JOIN_MISSING" in msg or "GROUPCALL_FORBIDDEN" in msg:
-                    log.info("Rientro nella diretta (%s)", msg)
-                    await self.join()
+                    await self.rejoin_if_stale(started)
                     raise ChunkNotReady(msg) from e
+                if (getattr(e, "code", 0) or 0) >= 500 or "INTERNAL" in msg or "TIMEOUT" in msg:
+                    raise ChunkNotReady(msg) from e     # errore del server Telegram: si riprova
                 raise Resync(msg) from e
+            except (ConnectionError, OSError, IOError) as e:
+                log.info("Chunk %s: connessione allo stream caduta (%s), la riapro", time_ms, e)
+                self.live.drop_sender(dc)
+                raise ChunkNotReady("RETE") from e
             if isinstance(res, types.upload.FileCdnRedirect):
                 raise Resync("redirect CDN")
             data += res.bytes

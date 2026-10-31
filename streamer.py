@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 import tempfile
 import time
@@ -82,7 +83,9 @@ class HlsWriter:
     async def _start(self) -> None:
         audio = (["-map", "0:a:0?", "-c:a", "aac", "-b:a", "128k", "-af", "aresample=async=1000:first_pts=0"]
                  if self.has_audio else ["-an"])
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-fflags", "+genpts+discardcorrupt",
+        # Niente «discardcorrupt»: ogni pezzo arriva con i contatori MPEG-TS che ripartono da zero, e con
+        # quell'opzione ffmpeg scartava il primo fotogramma di ogni pezzo (un microscatto al secondo).
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-fflags", "+genpts",
                "-f", "mpegts", "-i", "pipe:0", "-map", "0:v:0?", "-c:v", "copy", *audio,
                "-f", "hls", "-hls_time", "2", "-hls_list_size", str(PLAYLIST_SIZE),
                "-hls_flags", "delete_segments+independent_segments+omit_endlist+temp_file",
@@ -145,8 +148,19 @@ class HlsWriter:
 
 # --------------------------------------------------------------------------- sources
 
+def _flood_seconds(e: Exception) -> int:
+    m = re.search(r"FLOOD_WAIT_(\d+)", str(e))
+    return int(m.group(1)) if m else 0
+
+
 class TelegramSource:
-    """Produce chunk in tempo reale da una diretta Telegram."""
+    """Produce chunk in tempo reale da una diretta Telegram.
+
+    Regole per non farsi rallentare da Telegram:
+    - se Telegram chiede di aspettare (FLOOD_WAIT_x) si aspetta davvero x secondi, tutti insieme;
+    - un pezzo «non ancora pronto» (TIME_TOO_BIG) si richiede con calma, e i pezzi dopo di lui
+      non si chiedono prima del loro momento (ne esce uno al secondo);
+    - problemi di rete passeggeri non fermano la diretta: si riprova."""
 
     def __init__(self, reader):
         self.reader = reader
@@ -156,6 +170,11 @@ class TelegramSource:
         self.jumped = False
         self.on_status = None
         self._tasks: dict[int, asyncio.Task] = {}
+        self.flood_until = 0.0
+        self.too_big_t: int | None = None     # primo pezzo trovato «non ancora pronto»…
+        self.too_big_at = 0.0                 # …e quando
+        self.stats = {"chunks": 0, "waits": 0, "floods": 0, "net": 0, "slow": 0}
+        self.stats_at = time.monotonic()
 
     def _status(self, text: str) -> None:
         if self.on_status:
@@ -181,36 +200,86 @@ class TelegramSource:
         for t in self._tasks.values():
             t.cancel()
         self._tasks.clear()
+        self.too_big_t = None
+
+    def _note_not_ready(self, t: int, e: Exception) -> None:
+        fs = _flood_seconds(e)
+        if fs:
+            self.flood_until = max(self.flood_until, time.monotonic() + fs + 0.2)
+            self.stats["floods"] += 1
+        elif "TIME_TOO_BIG" in str(e):
+            if self.too_big_t is None or t < self.too_big_t:
+                self.too_big_t, self.too_big_at = t, time.monotonic()
+        elif str(e) in ("RETE", "TIMEOUT"):
+            self.stats["net"] += 1
+
+    async def _wait_turn(self, t: int) -> None:
+        """Aspetta il momento giusto per chiedere il pezzo t (pause di Telegram e pezzi futuri)."""
+        while True:
+            now = time.monotonic()
+            wait = self.flood_until - now
+            if self.too_big_t is not None and t > self.too_big_t:
+                wait = max(wait, self.too_big_at + (t - self.too_big_t) / 1000 - 0.25 - now)
+            if wait <= 0:
+                return
+            await asyncio.sleep(min(wait, 1.0))
+
+    async def _get(self, t: int) -> bytes:
+        await self._wait_turn(t)
+        t0 = time.monotonic()
+        data = await self.reader.fetch(t)
+        if time.monotonic() - t0 > 2.5:
+            self.stats["slow"] += 1
+        if self.too_big_t is not None and t >= self.too_big_t:
+            self.too_big_t = None             # quel pezzo è arrivato: i prossimi seguono al loro ritmo
+        return data
 
     async def _fetch_patient(self, t: int) -> bytes:
-        """Pezzo futuro: «non ancora pronto» è normale, riprovo finché esce (al massimo 15 s)."""
-        waited = 0.0
+        """Pezzo futuro: «non ancora pronto» è normale, riprovo con calma finché esce (al massimo 15 s)."""
+        started = time.monotonic()
         while True:
             try:
-                return await self.reader.fetch(t)
-            except ChunkNotReady:
-                if waited > 15:
+                return await self._get(t)
+            except ChunkNotReady as e:
+                self._note_not_ready(t, e)
+                if time.monotonic() - started > 15:
                     raise
-                await asyncio.sleep(0.3)
-                waited += 0.3
+                await asyncio.sleep(0.4)
 
     async def _take(self, t: int) -> bytes:
         """Restituisce il pezzo t, tenendo già in download i successivi (niente scatti per attese di rete)."""
         if not self.count:
-            return await self.reader.fetch(t)
+            return await self._get(t)
         for old in [x for x in self._tasks if x < t]:
             self._tasks.pop(old).cancel()
         for k in range(PREFETCH):
             tt = t + k * CHUNK_MS
             if tt not in self._tasks:
                 self._tasks[tt] = asyncio.create_task(self._fetch_patient(tt))
-        return await self._tasks.pop(t)
+        task = self._tasks[t]
+        try:
+            return await task
+        finally:
+            if self._tasks.get(t) is task and task.done():
+                self._tasks.pop(t, None)
 
     async def _rejoin(self, why: str) -> None:
         self.rejoins += 1
         log.info("Rientro nella diretta (%d/%d): %s", self.rejoins, MAX_REJOINS, why)
         self._status(f"Il video non arriva: rientro nella diretta ({self.rejoins}/{MAX_REJOINS})…")
+        self._clear_prefetch()
         await self.reader.rejoin()
+
+    def _log_stats(self) -> None:
+        now = time.monotonic()
+        if now - self.stats_at < 60:
+            return
+        st = self.stats
+        log.info("Diretta %s: %d pezzi in %ds, attese %d, pause Telegram %d, rete %d, pezzi lenti %d",
+                 getattr(self.reader, "peer_id", "?"), st["chunks"], int(now - self.stats_at),
+                 st["waits"], st["floods"], st["net"], st["slow"])
+        self.stats = {k: 0 for k in st}
+        self.stats_at = now
 
     async def next(self):
         self.jumped = False
@@ -230,6 +299,8 @@ class TelegramSource:
                 data = await self._take(self.time_ms)
                 break
             except ChunkNotReady as e:
+                self._note_not_ready(self.time_ms, e)
+                self.stats["waits"] += 1
                 if not self.count:
                     self._status(f"Aspetto il primo pezzo di video… (Telegram: {e or 'non pronto'}, {int(waited)} s)")
                     # Primo pezzo che non arriva: come quando apri la diretta su Telegram, rientro.
@@ -238,8 +309,9 @@ class TelegramSource:
                         self.time_ms = await self.reader.start_ms()
                         waited = 0.0
                         continue
-                await asyncio.sleep(0.1)
-                waited += 0.1
+                pause = 0.4
+                await asyncio.sleep(pause)
+                waited += pause
                 if waited > 20:
                     try:
                         end = await self.reader.stream_end_ms(max_wait=10)
@@ -248,6 +320,10 @@ class TelegramSource:
                     if end is None or waited > 60:
                         raise NotLive()
                     if end != -1:
+                        if self.time_ms < end - MAX_LAG_MS:     # rimasto indietro durante l'attesa: salto avanti
+                            self.time_ms = (end // CHUNK_MS) * CHUNK_MS - 2000
+                            self.jumped = True
+                            self._clear_prefetch()
                         waited = 0.0
             except Resync as e:
                 self.resyncs = getattr(self, "resyncs", 0) + 1
@@ -262,6 +338,10 @@ class TelegramSource:
         self.time_ms += CHUNK_MS
         self.count += 1
         self.resyncs = 0
+        self.stats["chunks"] += 1
+        if self.count % 300 == 0:
+            self.rejoins = 0                  # partita lunga: dopo 5 minuti buoni si può di nuovo rientrare
+        self._log_stats()
         if self.count == 1:
             log.info("Primo pezzo della diretta ricevuto (%d byte)", len(data))
         return parse_chunk(data) if data else None

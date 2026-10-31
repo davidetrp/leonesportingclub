@@ -205,10 +205,10 @@ async def today_matches() -> dict:
             try:
                 html = await asyncio.to_thread(get_html, seriec.URL.format(g=g))
                 ok = True
-                found = seriec.parse(html, day, g)
+                found = await asyncio.to_thread(seriec.parse, html, day, g)     # fuori dal filo del video
                 out += found
                 if not found:
-                    nodes = seriec.text_nodes(html)
+                    nodes = await asyncio.to_thread(seriec.text_nodes, html)
                     i = next((k for k, n in enumerate(nodes) if "oggi" in n.lower() or " ore " in f" {n.lower()} "), None)
                     log.info("Serie C girone %s: nessuna partita oggi. Testo vicino: %s", g.upper(),
                              nodes[i:i + 12] if i is not None else nodes[:12])

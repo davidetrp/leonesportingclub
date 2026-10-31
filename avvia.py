@@ -6,7 +6,8 @@ Uso (da qualsiasi shell, anche fish):
 Cosa fa:
 - avvia il server (server.py) e lo riavvia se si ferma;
 - ogni minuto controlla GitHub: se c'è una versione nuova la scarica (git pull),
-  reinstalla le dipendenze se sono cambiate e riavvia il server;
+  reinstalla le dipendenze se sono cambiate e riavvia il server — ma mai mentre
+  qualcuno sta guardando una diretta: in quel caso aspetta che finisca;
 - sul Mac impedisce lo stop automatico finché è acceso (caffeinate).
 """
 from __future__ import annotations
@@ -22,6 +23,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CHECK_EVERY_S = int(os.environ.get("CHECK_EVERY_S", "60"))
 PY = sys.executable
+LAUNCHER_CHANGED = False
 
 
 def say(msg: str) -> None:
@@ -30,6 +32,28 @@ def say(msg: str) -> None:
 
 def git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=HERE, capture_output=True, text=True, timeout=60)
+
+
+def server_busy() -> bool:
+    """True se il server sta trasmettendo una diretta (non va riavviato adesso)."""
+    import json
+    import urllib.request
+    port = os.environ.get("PORT") or _env_port()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as r:
+            return int(json.loads(r.read() or b"{}").get("streaming", 0)) > 0
+    except Exception:  # noqa: BLE001 - server vecchio o spento: non è occupato
+        return False
+
+
+def _env_port() -> str:
+    try:
+        for line in (HERE / ".env").read_text().splitlines():
+            if line.strip().startswith("PORT="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'") or "8080"
+    except OSError:
+        pass
+    return "8080"
 
 
 def has_git() -> bool:
@@ -48,6 +72,7 @@ def update_available() -> bool:
 
 
 def pull() -> bool:
+    global LAUNCHER_CHANGED
     before = git("rev-parse", "HEAD").stdout.strip()
     res = git("pull", "--ff-only", "--quiet")
     if res.returncode != 0:
@@ -56,6 +81,7 @@ def pull() -> bool:
     changed = git("diff", "--name-only", before, "HEAD").stdout.split()
     msg = git("log", "-1", "--format=%s").stdout.strip()
     say(f"Aggiornato: {msg}")
+    LAUNCHER_CHANGED = "avvia.py" in changed
     if "requirements.txt" in changed:
         say("Dipendenze cambiate: le reinstallo…")
         subprocess.run([PY, "-m", "pip", "install", "-q", "-r", "requirements.txt"], cwd=HERE)
@@ -92,6 +118,7 @@ def main() -> None:
 
     proc = start_server()
     last_check = time.monotonic()
+    waiting_msg = False
     try:
         while True:
             time.sleep(2)
@@ -102,9 +129,21 @@ def main() -> None:
             if auto_update and time.monotonic() - last_check > CHECK_EVERY_S:
                 last_check = time.monotonic()
                 try:
-                    if update_available() and pull():
-                        stop_server(proc)
-                        proc = start_server()
+                    if update_available():
+                        if server_busy():
+                            if not waiting_msg:
+                                say("C'è una versione nuova: la installo appena finisce la diretta in corso")
+                                waiting_msg = True
+                            continue
+                        waiting_msg = False
+                        if pull():
+                            stop_server(proc)
+                            if LAUNCHER_CHANGED:          # è cambiato anche questo file: riparto con la versione nuova
+                                say("Riavvio anche il programma di avvio")
+                                if keep_awake:
+                                    keep_awake.terminate()
+                                os.execv(PY, [PY, str(HERE / "avvia.py")])
+                            proc = start_server()
                 except subprocess.SubprocessError as e:
                     say(f"Controllo aggiornamenti saltato: {e}")
     except KeyboardInterrupt:

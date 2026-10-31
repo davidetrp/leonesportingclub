@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Barlow:wght@400;500;600&display=swap">
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+<script src="/vendor/hls.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/hls.js@1.5.15/dist/hls.min.js';document.head.appendChild(s)"></script>
 <style>
 /* Layout: today's fixtures in a left rail (stacks below on phones), broadcast monitor + channel grid on the right */
 :root {
@@ -880,7 +880,6 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
 
   function stopPlayer() {
     playing = false;
-    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
     if (hls) { hls.destroy(); hls = null; }
     video.removeAttribute("src"); try { video.load(); } catch (e) {}
   }
@@ -915,33 +914,53 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     video.addEventListener("playing", hideOverlay, { once: true });
   }
 
+  // Ripresa automatica: se la diretta si ferma (intervallo, trasmettitore che stacca, rete che salta)
+  // non serve ripremere il canale, l'app riprova da sola finché resti su quel canale.
+  var autoTries = 0;
+  function resumeLater(id, token, ms) {
+    setTimeout(function () { if (token === tuneToken && currentId === id) tune(id, true); }, ms);
+  }
   function handleStatus(id, token, r) {
     if (token !== tuneToken) return;
     var st = r.stream, c = byId(id);
-    if (st === "live") { startPlayer(id); return; }
+    if (st === "live") { autoTries = 0; startPlayer(id); return; }
     if (st === "starting") { overlay("Mi collego alla diretta…", (r.message && r.message !== "Mi collego alla diretta…") ? r.message : label(c), true); return; }
-    clearInterval(statusTimer); statusTimer = null; stopPlayer();
-    if (st === "offline") overlay("Nessuna diretta ora", "Su " + label(c) + " non sta trasmettendo nessuno. Riprova quando parte la partita.");
-    else if (st === "unsupported") overlay("Diretta non leggibile", r.message);
-    else if (st === "idle") overlay("Canale in pausa", "Tocca di nuovo il canale per riprendere.");
-    else overlay("Qualcosa non va", r.message || "Errore sconosciuto.");
+    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+    stopPlayer();
+    if (st === "offline") {
+      overlay("In attesa della diretta", "Su " + label(c) + " ora non trasmette nessuno. Riprovo da solo ogni 30 secondi.");
+      resumeLater(id, token, 30000);
+    } else if (st === "unsupported") overlay("Diretta non leggibile", r.message);
+    else if (st === "idle") {
+      if (autoTries < 6) { overlay("Riprendo la diretta…", label(c), true); resumeLater(id, token, 800); }
+      else overlay("Canale in pausa", "Tocca di nuovo il canale per riprendere.");
+    } else if (autoTries < 8) {
+      overlay("Riprovo tra pochi secondi…", r.message || "Errore sconosciuto.", true);
+      resumeLater(id, token, 5000);
+    } else overlay("Qualcosa non va", (r.message || "Errore sconosciuto.") + " Tocca di nuovo il canale per riprovare.");
   }
 
-  function tune(id) {
+  function tune(id, auto) {
     var c = byId(id);
     if (!c) return;
+    autoTries = auto ? autoTries + 1 : 0;
     currentId = id; store("cs-current-id", id);
     var token = ++tuneToken;
+    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
     stopPlayer(); renderGrid(); renderInfo();
     if (editing !== "new") fillForm();
-    overlay("Mi collego alla diretta…", label(c), true);
+    overlay(auto ? "Riprendo la diretta…" : "Mi collego alla diretta…", label(c), true);
     api("/api/play/" + id, { method: "POST" }).then(function (r) {
       handleStatus(id, token, r);
       if (token !== tuneToken || !(r.stream === "starting" || r.stream === "live")) return;
-      statusTimer = setInterval(function () {
-        api("/api/play/" + id).then(function (r2) { handleStatus(id, token, r2); }).catch(function () {});
-      }, playing ? 5000 : 1000);
-    }).catch(function () {});
+      (function poll() {                        // ogni secondo mentre si collega, ogni 5 s mentre va
+        statusTimer = setTimeout(function () {
+          if (token !== tuneToken) return;
+          api("/api/play/" + id).then(function (r2) { handleStatus(id, token, r2); if (token === tuneToken && statusTimer) poll(); })
+            .catch(function () { if (token === tuneToken) poll(); });
+        }, playing ? 5000 : 1000);
+      })();
+    }).catch(function () { if (token === tuneToken) { overlay("Server non raggiungibile", "Riprovo tra pochi secondi…", true); resumeLater(id, token, 5000); } });
   }
 
   $("unmute").addEventListener("click", function () { video.muted = false; store("cs-sound", true); var p = video.play(); if (p && p.catch) p.catch(function () {}); $("unmute").hidden = true; });

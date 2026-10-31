@@ -55,6 +55,7 @@ SECRET_FILE = config.DATA_DIR / "secret.key"
 LIVE_CACHE_S = 45
 MIN_VIEWERS = 50          # sotto questa soglia il canale è nascosto e non si carica niente
 SMALL_CACHE_S = 300
+LIVE_INFO_SEM = asyncio.Semaphore(3)
 
 
 class App:
@@ -166,7 +167,8 @@ async def live_status(peer_id) -> dict:
     if cached and now - cached[0] < ttl:
         return cached[1]
     try:
-        info = await App.live.live_info(int(peer_id))
+        async with LIVE_INFO_SEM:            # al massimo 3 richieste insieme: niente raffiche verso Telegram
+            info = await App.live.live_info(int(peer_id))
         res = {"live": False} if info is None else {
             "live": True, "rtmp": info.rtmp, "title": info.title, "viewers": info.participants}
     except Exception as e:  # noqa: BLE001
@@ -376,7 +378,9 @@ async def get_events(refresh: bool = False) -> list[dict]:
     if not App.events:
         return []
     now = time.monotonic()
-    if not refresh and App.events_cache and now - App.events_cache[0] < EVENTS_CACHE_S:
+    # Mentre si guarda una diretta la lista del bot si aggiorna di rado: meno richieste all'account Telegram.
+    ttl = EVENTS_CACHE_S * 7 if any(st.running for st in App.streamers.values()) else EVENTS_CACHE_S
+    if not refresh and App.events_cache and now - App.events_cache[0] < ttl:
         return App.events_cache[1]
     try:
         evs = await App.events.fetch(refresh=refresh)
@@ -648,6 +652,10 @@ async def detect_channel(c: dict, fixtures: list[dict]) -> None:
         elif config.DEMO:
             src, how = None, "demo"
         else:
+            if _someone_watching():
+                return                               # una diretta si è appena aperta: non entro in un'altra
+            # Nessuna attesa tra il controllo qui sopra e la registrazione del fotogramma in corso: così se
+            # in questo istante apri un canale, la lettura viene interrotta prima di disturbarlo.
             task = asyncio.create_task(_frame_from_call(c["peer_id"], tmp))
             App.snapshot = (c["peer_id"], task)
             try:
@@ -1010,6 +1018,43 @@ async def robots(_: Request):
     return FileResponse(STATIC / "robots.txt", media_type="text/plain")
 
 
+HLSJS_FILE = config.DATA_DIR / "hls-1.5.15.min.js"
+HLSJS_URLS = ["https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js",
+              "https://unpkg.com/hls.js@1.5.15/dist/hls.min.js"]
+
+
+async def hlsjs(_: Request):
+    """Il lettore video (hls.js) servito dal Mac: lo scarica una volta e lo tiene in data/,
+    così l'avvio della diretta non dipende ogni volta da un sito esterno."""
+    if not HLSJS_FILE.exists():
+        def download():
+            import urllib.request
+            from matches import SSL_CTX
+            for url in HLSJS_URLS:
+                try:
+                    req = urllib.request.Request(url, headers={"User-Agent": "LeoneSportingClub"})
+                    with urllib.request.urlopen(req, timeout=15, context=SSL_CTX) as r:
+                        body = r.read()
+                    if len(body) > 100_000 and b"Hls" in body:
+                        tmp = HLSJS_FILE.with_suffix(".tmp")
+                        tmp.write_bytes(body)
+                        os.replace(tmp, HLSJS_FILE)
+                        return True
+                except Exception as e:  # noqa: BLE001
+                    log.info("hls.js non scaricato da %s: %s", url, e)
+            return False
+        if not await asyncio.to_thread(download):
+            return RedirectResponse(HLSJS_URLS[0], status_code=302)
+    return FileResponse(HLSJS_FILE, media_type="application/javascript",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+async def health(_: Request):
+    """Per il programma di avvio: c'è una diretta in corso? (allora non si riavvia per aggiornare)"""
+    return JSONResponse({"streaming": sum(1 for s in App.streamers.values() if s.running),
+                         "resting": App.resting})
+
+
 routes = [
     Route("/", index),
     Route("/robots.txt", robots),
@@ -1019,6 +1064,8 @@ routes = [
     Route("/api/tv/lg", lg_install, methods=["GET", "POST"]),
     Route("/api/settings", settings, methods=["GET", "POST"]),
     Route("/api/preload", preload, methods=["GET", "POST"]),
+    Route("/api/health", health),
+    Route("/vendor/hls.min.js", hlsjs),
     Route("/api/account", account_login, methods=["POST"]),
     Route("/api/login", login, methods=["POST"]),
     Route("/api/state", state),
@@ -1082,7 +1129,7 @@ class WakeMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"].startswith(("/api/", "/hls/")):
+        if scope["type"] == "http" and scope["path"].startswith(("/api/", "/hls/")) and scope["path"] != "/api/health":
             App.last_activity = time.monotonic()
             if App.resting:
                 await wake_up()
