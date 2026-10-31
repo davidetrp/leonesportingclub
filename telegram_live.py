@@ -210,7 +210,8 @@ class CallReader:
         log.info("Entrato nella diretta %s: rtmp=%s, dc stream=%s, dc account=%s, modalità=%s",
                  self.peer_id, info.rtmp, info.dc_id, self.client.session.dc_id,
                  {k: v for k, v in mode.items() if k in ("stream", "rtmp")})
-        await self.verify_joined()
+        if not getattr(self, "quick", False):   # lettura di un solo fotogramma: niente controllo (risparmia 1 s)
+            await self.verify_joined()
 
     async def verify_joined(self) -> bool:
         """Chiede a Telegram se il nostro ingresso risulta registrato (come phone.checkGroupCall dell'app ufficiale)."""

@@ -718,7 +718,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   function hideSplash() {
     setTimeout(function () { var sp = $("splash"); if (sp) sp.classList.add("gone"); }, Math.max(0, SPLASH_MS - (Date.now() - splashT0)));
   }
-  setTimeout(hideSplash, 18000);              // rete di sicurezza: lo splash aspetta il preload (max ~15 s)
+  setTimeout(hideSplash, 23000);              // rete di sicurezza: lo splash aspetta il preload (max ~15 s)
 
   function store(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
   function load(k, d) { try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
@@ -1611,23 +1611,38 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   // Lo splash resta finché il server ha caricato spettatori e nomi delle partite (massimo ~15 s), poi si parte.
   function preloadThenStart(done) {
     var t0 = Date.now(), finished = false;
-    function finish() { if (finished) return; finished = true; $("spStep").textContent = ""; done(); }
+    var last = {};
+    function finish() { if (finished) return; finished = true; $("spStep").textContent = ""; done(last); }
     function poll() {
       api("/api/preload").then(function (r) {
+        last = r;
         if (r.step) $("spStep").textContent = r.step;
-        if (!r.running || Date.now() - t0 > 15000) finish(); else setTimeout(poll, 600);
+        if (!r.running || Date.now() - t0 > 20000) finish(); else setTimeout(poll, 600);
       }).catch(finish);
     }
     $("spStep").textContent = "Controllo le dirette…";
     api("/api/preload", { method: "POST" }).then(function () { setTimeout(poll, 400); }).catch(finish);
-    setTimeout(finish, 16000);
+    setTimeout(finish, 21000);
   }
 
   function boot() {
-    preloadThenStart(function () {
+    preloadThenStart(function (pre) {
       refresh().then(function () {
         if (!byId(currentId) || !visible(byId(currentId))) currentId = order.length ? order[0].id : null;
-        if (currentId) tune(currentId);
+        // Se il server sta ancora leggendo i nomi degli altri canali, non apro niente da solo: aprire una diretta
+        // fermerebbe la lettura (l'account Telegram sta in una diretta alla volta). Scegli tu quando vuoi.
+        if (currentId && pre && pre.bg && !linkCh) {
+          renderInfo(); overlay("Scegli un canale", "Sto leggendo i nomi delle altre partite: compaiono nella lista tra pochi secondi.");
+          (function follow() {
+            setTimeout(function () {
+              refresh().catch(function () {});
+              api("/api/preload").then(function (r) {
+                if (r.bg) follow();
+                else if (!playing && $("ovMsg").textContent === "Scegli un canale") overlay("Scegli un canale", "Tocca un canale per guardarlo.");
+              }).catch(function () {});
+            }, 5000);
+          })();
+        } else if (currentId) tune(currentId);
         else { overlay("Nessun canale", channels.length ? "Nessun canale in diretta con abbastanza spettatori." : "Tocca + per aggiungere il primo canale."); fillForm(); }
         if (TV) tvFocus(document.getElementById("ch-" + currentId) || document.querySelector(".card") || $("allToggle"));
         hideSplash();
