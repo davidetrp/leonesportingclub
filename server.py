@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets
 import shutil
 import time
@@ -66,7 +67,9 @@ class App:
     events_error = ""
     unlock_task = None
     me = None              # utente Telegram collegato
-    detected: dict[int, dict] = {}     # partita letta nel video: {cid: {title, score, league, at}}
+    detected: dict[int, dict] = {}     # ultimo tentativo di lettura: {cid: {at}}
+    names: dict[int, dict] = {}        # memoria dei nomi imparati (data/nomi-partite.json)
+    offline_since: dict[int, float] = {}
     last_seen = 0.0                    # ultima volta che qualcuno ha aperto l'app
     snapshot = None                    # (peer_id, task) del fotogramma in corso
     last_activity = 0.0                # ultima richiesta dall'app (riposo dopo REST_AFTER_S)
@@ -244,11 +247,10 @@ async def state(request: Request):
     for c, st in zip(channels, statuses):
         stv = App.streamers.get(c["id"])
         ev = next((e for e in evs if e.get("peer_id") is not None and e["peer_id"] == c["peer_id"]), None)
-        if st.get("live") is False:
-            App.detected.pop(c["id"], None)
-        det = App.detected.get(c["id"]) if st.get("live") else None
+        note_live(c["id"], st.get("live"))
+        det = remembered(c["id"]) if st.get("live") else None
         out.append({**c, **st,
-                    "match": {k: det.get(k) for k in ("title", "score", "league")} if det and det.get("title") else None,
+                    "match": det,
                     "event": {"name": ev["name"], "time": ev.get("time"), "league": ev.get("league")} if ev else None,
                     "stream": stv.state if stv else "idle",
                     "message": stv.message if stv else ""})
@@ -503,8 +505,6 @@ async def hls(request: Request):
 
 # --------------------------------------------------------------------------- nome della partita dal video
 
-RETRY_S = 90              # canale aperto senza nome: riprova dopo 90 s
-MAX_TRIES = 5             # poi smette fino alla prossima diretta
 
 
 async def cancel_snapshot(peer_id=None) -> None:
@@ -541,6 +541,90 @@ async def _frame_from_call(peer_id: int, tmp: Path) -> Path | None:
             pass
 
 
+# Memoria dei nomi: imparato il nome in un fotogramma, resta anche durante pubblicità, intervallo e replay
+# (quando il riquadro non c'è) e anche dopo un riavvio del server. Si dimentica quando la partita è finita,
+# quando il canale non trasmette più da 20 minuti, o quando nel video si legge un'altra partita.
+NAMES_FILE = config.DATA_DIR / "nomi-partite.json"
+NAME_MAX_S = 2 * 3600 + 45 * 60          # durata massima di un nome imparato senza orario della partita
+OFFLINE_FORGET_S = 20 * 60
+ATTEMPT_EVERY_S = 45                     # canale aperto senza nome: un tentativo ogni 45 s (solo dal video già scaricato)
+
+
+def _load_names() -> dict:
+    try:
+        data = json.loads(NAMES_FILE.read_text())
+        return {int(k): v for k, v in data.items()} if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_names() -> None:
+    try:
+        tmp = NAMES_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps({str(k): v for k, v in App.names.items()}, ensure_ascii=False))
+        os.replace(tmp, NAMES_FILE)
+    except OSError as e:
+        log.info("Nomi partite non salvati: %s", e)
+
+
+def _cached_fixtures() -> list[dict]:
+    """Partite di oggi già in memoria (senza scaricarle di nuovo)."""
+    import matches as mt
+    best = None
+    for _k, (_t, res) in getattr(mt, "_cache", {}).items():
+        best = res
+    return (best or {}).get("matches") or []
+
+
+def remembered(cid: int) -> dict | None:
+    """Nome imparato per il canale, se è ancora valido; con il punteggio aggiornato dai risultati in diretta."""
+    n = App.names.get(cid)
+    if not n:
+        return None
+    now = time.time()
+    fx = next((m for m in _cached_fixtures() if n.get("fixture_id") and m.get("id") == n["fixture_id"]), None)
+    expired = now - n.get("learned", now) > NAME_MAX_S
+    if fx:
+        try:
+            from datetime import datetime
+            start = datetime.fromisoformat(fx["start"]).timestamp()
+            expired = now > start + NAME_MAX_S
+        except (KeyError, ValueError):
+            pass
+        if fx.get("state") == "post" and now - n.get("learned", now) > 15 * 60:
+            expired = True
+    off = App.offline_since.get(cid)
+    if expired or (off and now - off > OFFLINE_FORGET_S):
+        App.names.pop(cid, None)
+        _save_names()
+        return None
+    score = n.get("score")
+    if fx and fx.get("home_score") not in (None, "") and fx.get("away_score") not in (None, ""):
+        score = f"{fx['home_score']}-{fx['away_score']}"
+    return {"title": n["title"], "score": score, "league": n.get("league")}
+
+
+def learn(cid: int, res: dict) -> None:
+    old = App.names.get(cid)
+    if old and old.get("title") == res["title"]:
+        if res.get("score"):
+            old["score"] = res["score"]
+        return
+    if old and old.get("fixture_id") and not res.get("matched"):
+        return                                # un nome «vero» non si sostituisce con sigle lette a caso
+    App.names[cid] = {"title": res["title"], "score": res.get("score"), "league": res.get("league"),
+                      "fixture_id": res.get("fixture_id"), "learned": time.time()}
+    log.info("Canale %s: imparato «%s»", cid, res["title"])
+    _save_names()
+
+
+def note_live(cid: int, live) -> None:
+    if live is False:
+        App.offline_since.setdefault(cid, time.time())
+    elif live:
+        App.offline_since.pop(cid, None)
+
+
 async def detect_channel(c: dict, fixtures: list[dict]) -> None:
     import scorebug
     import tempfile
@@ -567,14 +651,14 @@ async def detect_channel(c: dict, fixtures: list[dict]) -> None:
             text = DemoSource.BUGS[c["id"] % len(DemoSource.BUGS)]
         res = scorebug.identify(text, fixtures)
         log.info("Canale %s (%s): letto «%s» → %s", c["id"], how, " ".join(text.split())[:80], res and res["title"])
-        prev = App.detected.get(c["id"]) or {}
-        App.detected[c["id"]] = {**(res or {"title": None}), "at": time.monotonic(), "tries": prev.get("tries", 0) + 1}
+        if res:
+            learn(c["id"], res)
+        App.detected[c["id"]] = {"at": time.monotonic()}
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001
         log.info("Canale %s: nome partita non letto (%s)", c["id"], e)
-        prev = App.detected.get(c["id"]) or {"title": None}
-        App.detected[c["id"]] = {**prev, "at": time.monotonic(), "tries": prev.get("tries", 0) + 1}
+        App.detected[c["id"]] = {"at": time.monotonic()}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -593,10 +677,10 @@ async def scan_loop() -> None:
                 s = App.streamers.get(c["id"])
                 if not (s and s.state == "live"):
                     continue
+                # Nome già imparato: non si legge più. Altrimenti un tentativo ogni 45 s dal video già scaricato
+                # (niente traffico verso Telegram), finché non compare il riquadro del punteggio.
                 d = App.detected.get(c["id"])
-                # Una volta sola: trovato il nome non si rilegge più finché la diretta non finisce.
-                # Se non si trova (pubblicità, replay, riquadro nascosto) riprova al massimo MAX_TRIES volte.
-                if d and (d.get("title") or d.get("tries", 0) >= MAX_TRIES or time.monotonic() - d["at"] < RETRY_S):
+                if remembered(c["id"]) or (d and time.monotonic() - d["at"] < ATTEMPT_EVERY_S):
                     continue
                 if fixtures is None:
                     fixtures = (await today_matches()).get("matches") or []
@@ -627,12 +711,13 @@ async def _run_preload() -> None:
             fixtures = (await asyncio.wait_for(today_matches(), 8)).get("matches") or []
         except Exception:  # noqa: BLE001
             fixtures = []
-        for c, st in zip(channels, statuses):          # diretta finita: il nome si dimentica
-            if st.get("live") is False:
-                App.detected.pop(c["id"], None)
-        # Solo i canali mai provati in questa diretta: un ingresso per canale, non a ogni apertura dell'app.
+        for c, st in zip(channels, statuses):
+            note_live(c["id"], st.get("live"))
+        # Solo i canali senza nome in memoria e non provati negli ultimi 10 minuti: un ingresso per canale.
+        recent = lambda cid: App.detected.get(cid) and time.monotonic() - App.detected[cid]["at"] < 600  # noqa: E731
         todo = [(c, st) for c, st in zip(channels, statuses)
-                if st.get("live") and (st.get("viewers") or 0) >= MIN_VIEWERS and c["id"] not in App.detected]
+                if st.get("live") and (st.get("viewers") or 0) >= MIN_VIEWERS
+                and not remembered(c["id"]) and not recent(c["id"])]
         todo.sort(key=lambda x: -(x[1].get("viewers") or 0))
         _preload["total"] = len(todo)
         import scorebug
@@ -677,6 +762,7 @@ async def lifespan(_app):
     else:
         await connect_telegram()
     App.last_activity = time.monotonic()
+    App.names = _load_names()
     scan = asyncio.create_task(scan_loop())
     rest = asyncio.create_task(rest_loop())
     yield
