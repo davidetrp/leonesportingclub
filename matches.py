@@ -69,7 +69,7 @@ def _get_json(url: str) -> dict:
         return json.loads(r.read().decode("utf-8"))
 
 
-def parse_events(data: dict, league: str, priority: int, day) -> list[dict]:
+def parse_events(data: dict, league: str, priority: int, day, code: str | None = None) -> list[dict]:
     out = []
     for ev in data.get("events", []) or []:
         try:
@@ -93,6 +93,7 @@ def parse_events(data: dict, league: str, priority: int, day) -> list[dict]:
         out.append({
             "id": ev.get("id"),
             "league": league,
+            "code": code,
             "priority": priority,
             "start": start.astimezone(timezone.utc).isoformat(),
             "time": local.strftime("%H:%M"),
@@ -173,7 +174,7 @@ async def today_matches() -> dict:
                 if e.code != 400:
                     raise
                 data = await asyncio.to_thread(_get_json, base)
-            return parse_events(data, name, prio, day)
+            return parse_events(data, name, prio, day, code)
         except Exception as e:  # noqa: BLE001
             log.info("Partite %s non disponibili: %s", code, e)
             return None
@@ -235,3 +236,115 @@ async def today_matches() -> dict:
            "error": None if any(r is not None for r in results) else "Partite non disponibili al momento."}
     _cache[key] = (time.monotonic(), res)
     return res
+
+
+# --------------------------------------------------------------------------- dettagli di una partita
+
+SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/{code}/summary?event={id}"
+SUMMARY_CACHE_S = 120          # partita in corso: dettagli aggiornati al massimo ogni 2 minuti
+_summary_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _txt(x) -> str:
+    return str(x or "").strip()
+
+
+def parse_summary(data: dict) -> dict:
+    """Formazioni, eventi e statistiche dal riepilogo ESPN, in una forma semplice per l'app."""
+    comp = ((data.get("header") or {}).get("competitions") or [{}])[0]
+    status = comp.get("status") or {}
+    teams = {}
+    for c in comp.get("competitors") or []:
+        t = c.get("team") or {}
+        teams[_txt(t.get("id"))] = {"side": c.get("homeAway"), "name": _txt(t.get("displayName")), "score": _txt(c.get("score"))}
+    home = next((t for t in teams.values() if t["side"] == "home"), {})
+    away = next((t for t in teams.values() if t["side"] == "away"), {})
+
+    lineups = []
+    for r in data.get("rosters") or []:
+        t = r.get("team") or {}
+        players = []
+        for p in r.get("roster") or []:
+            a = p.get("athlete") or {}
+            players.append({"n": _txt(p.get("jersey")), "name": _txt(a.get("displayName") or a.get("fullName")),
+                            "pos": _txt((p.get("position") or {}).get("abbreviation")), "starter": bool(p.get("starter")),
+                            "in": bool(p.get("subbedIn")), "out": bool(p.get("subbedOut"))})
+        lineups.append({"team": _txt(t.get("displayName")), "side": r.get("homeAway") or teams.get(_txt(t.get("id")), {}).get("side"),
+                        "formation": _txt(r.get("formation")),
+                        "starters": [p for p in players if p["starter"]], "bench": [p for p in players if not p["starter"]]})
+    lineups.sort(key=lambda x: 0 if x.get("side") == "home" else 1)
+
+    events = []
+    for e in data.get("keyEvents") or []:
+        kind = _txt((e.get("type") or {}).get("text") or (e.get("type") or {}).get("type"))
+        names = [_txt((p.get("athlete") or {}).get("displayName")) for p in e.get("participants") or [] if p.get("athlete")]
+        who = f"{names[0]} per {names[1]}" if "sub" in kind.lower() and len(names) >= 2 else ", ".join(names)
+        team = teams.get(_txt((e.get("team") or {}).get("id")), {})
+        if not kind and not who:
+            continue
+        events.append({"min": _txt((e.get("clock") or {}).get("displayValue")), "kind": kind, "who": who,
+                       "side": team.get("side"), "text": _txt(e.get("text"))[:160]})
+
+    stats = []
+    box = (data.get("boxscore") or {}).get("teams") or []
+    hs = next((b for b in box if b.get("homeAway") == "home"), box[0] if box else {})
+    as_ = next((b for b in box if b.get("homeAway") == "away"), box[1] if len(box) > 1 else {})
+    amap = {s.get("name"): s for s in (as_.get("statistics") or [])}
+    for s in hs.get("statistics") or []:
+        o = amap.get(s.get("name"))
+        if o is None:
+            continue
+        stats.append({"label": _txt(s.get("label") or s.get("name")), "home": _txt(s.get("displayValue")), "away": _txt(o.get("displayValue"))})
+
+    venue = _txt(((comp.get("venue") or {}) or (data.get("gameInfo") or {}).get("venue") or {}).get("fullName"))
+    return {"home": home.get("name"), "away": away.get("name"), "home_score": home.get("score"), "away_score": away.get("score"),
+            "status": _txt((status.get("type") or {}).get("detail") or (status.get("type") or {}).get("description")),
+            "clock": _txt(status.get("displayClock")), "state": _txt((status.get("type") or {}).get("state")),
+            "venue": venue, "lineups": lineups, "events": events, "stats": stats}
+
+
+async def match_details(code: str, event_id: str) -> dict:
+    key = f"{code}/{event_id}"
+    cached = _summary_cache.get(key)
+    if cached and time.monotonic() - cached[0] < SUMMARY_CACHE_S:
+        return cached[1]
+    data = await asyncio.to_thread(_get_json, SUMMARY_URL.format(code=code, id=event_id))   # fuori dal filo del video
+    res = await asyncio.to_thread(parse_summary, data)
+    _summary_cache[key] = (time.monotonic(), res)
+    if len(_summary_cache) > 40:
+        oldest = min(_summary_cache, key=lambda k: _summary_cache[k][0])
+        _summary_cache.pop(oldest, None)
+    return res
+
+
+def demo_summary() -> dict:
+    """Riepilogo finto nella forma di ESPN (per provare l'app in modalità demo)."""
+    def pl(n, name, pos, starter=True, **kw):
+        return {"jersey": str(n), "athlete": {"displayName": name}, "position": {"abbreviation": pos}, "starter": starter, **kw}
+    return {
+        "header": {"competitions": [{"status": {"displayClock": "67'", "type": {"state": "in", "detail": "67'"}},
+                                     "venue": {"fullName": "Allianz Stadium"},
+                                     "competitors": [{"homeAway": "home", "score": "1", "team": {"id": "1", "displayName": "Juventus"}},
+                                                     {"homeAway": "away", "score": "0", "team": {"id": "2", "displayName": "Inter"}}]}]},
+        "rosters": [{"homeAway": "home", "formation": "3-5-2", "team": {"id": "1", "displayName": "Juventus"},
+                     "roster": [pl(1, "Portiere Uno", "G"), pl(4, "Difensore Due", "D"), pl(9, "Attaccante Tre", "F", subbedOut=True),
+                                pl(20, "Riserva Quattro", "F", starter=False, subbedIn=True)]},
+                    {"homeAway": "away", "formation": "3-5-2", "team": {"id": "2", "displayName": "Inter"},
+                     "roster": [pl(1, "Portiere Cinque", "G"), pl(10, "Fantasista Sei", "M"), pl(99, "Riserva Sette", "F", starter=False)]}],
+        "keyEvents": [{"type": {"text": "Goal"}, "clock": {"displayValue": "23'"}, "team": {"id": "1"},
+                       "participants": [{"athlete": {"displayName": "Attaccante Tre"}}]},
+                      {"type": {"text": "Yellow Card"}, "clock": {"displayValue": "41'"}, "team": {"id": "2"},
+                       "participants": [{"athlete": {"displayName": "Fantasista Sei"}}]},
+                      {"type": {"text": "Substitution"}, "clock": {"displayValue": "60'"}, "team": {"id": "1"},
+                       "participants": [{"athlete": {"displayName": "Riserva Quattro"}}, {"athlete": {"displayName": "Attaccante Tre"}}]}],
+        "boxscore": {"teams": [{"homeAway": "home", "statistics": [{"name": "possessionPct", "label": "Possession", "displayValue": "54.2"},
+                                                                  {"name": "totalShots", "label": "Shots", "displayValue": "11"},
+                                                                  {"name": "shotsOnTarget", "label": "On Target", "displayValue": "4"}]},
+                               {"homeAway": "away", "statistics": [{"name": "possessionPct", "label": "Possession", "displayValue": "45.8"},
+                                                                  {"name": "totalShots", "label": "Shots", "displayValue": "7"},
+                                                                  {"name": "shotsOnTarget", "label": "On Target", "displayValue": "2"}]}]},
+    }
+
+
+def demo_details() -> dict:
+    return {**parse_summary(demo_summary()), "league": "Serie A", "start": None}

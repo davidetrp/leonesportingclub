@@ -244,6 +244,56 @@ body.theater .screen { aspect-ratio: auto; height: 100vh; }
 body.theater .info { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(transparent, rgba(0,0,0,.75)); transition: opacity .4s; }
 body.theater.calm .info, body.theater.calm .ctrl { opacity: 0; }
 body.theater .ctrl { display: none !important; }
+/* ---- Dettagli partita ---- */
+.info { align-items: center; }
+.info-btn { margin-left: auto; flex: none; }
+.match-panel { width: min(560px, 100vw); }
+.m-score { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; text-align: center; padding: 6px 0 4px; }
+.m-score .tm { font-weight: 700; font-size: 1.05rem; overflow-wrap: anywhere; }
+.m-score .sc { font-family: var(--font-display); font-weight: 900; font-size: 2.6rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.m-score .st { grid-column: 1 / -1; color: var(--muted); font-size: .85rem; }
+.m-score .st.live { color: var(--live); font-weight: 700; }
+.m-tabs { justify-self: stretch; display: flex; }
+.m-tabs button { flex: 1; }
+.lu { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.lu h4 { margin: 0 0 6px; font-size: .95rem; }
+.lu h4 small { color: var(--muted); font-weight: 600; margin-left: 6px; }
+.lu ol { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 3px; font-size: .88rem; }
+.lu li { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 6px; align-items: baseline; }
+.lu li b { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.lu li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lu li i { font-style: normal; font-size: .72rem; color: var(--muted); }
+.lu li.out span { color: var(--muted); }
+.lu .sub-title { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 4px 0; }
+.tag-s { font-size: .68rem; font-weight: 700; padding: 0 5px; border-radius: 4px; margin-left: 4px; }
+.tag-s.in { background: color-mix(in srgb, var(--ok) 25%, transparent); color: var(--ok); }
+.tag-s.out { background: color-mix(in srgb, var(--live) 22%, transparent); color: var(--live); }
+.evl { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.evl li { display: grid; grid-template-columns: 46px 14px minmax(0, 1fr); gap: 8px; align-items: center; font-size: .9rem; }
+.evl li.away { direction: rtl; text-align: right; }
+.evl li.away > * { direction: ltr; }
+.evl .mn { font-family: var(--font-display); font-weight: 800; font-variant-numeric: tabular-nums; }
+.evl .ic { width: 12px; height: 12px; border-radius: 3px; background: var(--muted); }
+.evl .ic.goal { background: var(--ok); border-radius: 50%; }
+.evl .ic.yellow { background: #f5c518; }
+.evl .ic.red { background: var(--live); }
+.evl .ic.sub { background: #4a90e2; border-radius: 50%; }
+.evl small { color: var(--muted); }
+.stl { display: grid; gap: 10px; }
+.str { display: grid; grid-template-columns: 52px minmax(0, 1fr) 52px; gap: 8px; align-items: center; font-size: .88rem; }
+.str b { font-variant-numeric: tabular-nums; }
+.str b:last-child { text-align: right; }
+.str .lb { text-align: center; color: var(--muted); font-size: .8rem; display: grid; gap: 4px; }
+.str .bars { display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: var(--line); }
+.str .bars i { display: block; height: 100%; background: var(--accent); }
+.str .bars i + i { background: var(--gold); }
+body.tv .match-panel { width: 50vw; }
+body.tv .m-score .sc { font-size: 5vh; }
+body.tv .m-score .tm { font-size: 2.2vh; }
+body.tv .m-score .st, body.tv .m-tabs button, body.tv .lu h4 { font-size: 1.8vh; }
+body.tv .lu li, body.tv .evl li, body.tv .str { font-size: 1.7vh; }
+body.tv .info-btn { font-size: 1.6vh; padding: .8vh 1vw; }
+@media (max-width: 520px) { .info-btn { display: none !important; } }
 /* ---- Impostazioni: pannello a destra (a tutto schermo sul telefono) ---- */
 .sheet { position: fixed; inset: 0; z-index: 120; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
 .sheet-back { background: rgba(0, 0, 0, .6); backdrop-filter: blur(3px); }
@@ -587,6 +637,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
           <div class="bug" id="bug" hidden><span class="tag live">Live</span><span class="tag" id="bugCh">CH 1</span></div>
           <div class="ctrl" id="ctrl" hidden>
             <button class="chip hot" id="unmute" type="button">Attiva audio</button>
+            <button class="chip" id="infoChip" type="button" hidden>Info partita</button>
             <button class="chip" id="shareBtn" type="button">Condividi</button>
             <button class="chip" id="castBtn" type="button" hidden>Trasmetti</button>
             <button class="chip" id="full" type="button">Schermo intero</button>
@@ -598,6 +649,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
             <div class="chan-name" id="chanName">Nessun canale</div>
             <div class="chan-src" id="chanSrc">Aggiungi un canale con il tasto +</div>
           </div>
+          <button class="toggle info-btn" id="infoBtn" type="button" hidden>Formazioni e statistiche</button>
         </div>
       </section>
 
@@ -630,6 +682,21 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
       <footer id="foot">I canali sono ordinati per spettatori e si aggiornano ogni 20 secondi. Quando riesce, il nome della partita viene letto dal video (in alto a sinistra) e il nome del canale Telegram resta sotto. Con ★ fissi in cima quelli che preferisci, su questo dispositivo.</footer>
     </div>
   </div>
+</div>
+
+<div class="sheet" id="matchSheet" role="dialog" aria-modal="true" aria-labelledby="mTitle" hidden>
+  <div class="sheet-back" id="mBack"></div>
+  <section class="sheet-panel match-panel">
+    <div class="sheet-head"><h2 id="mTitle">Partita</h2><button class="mini" id="mClose" type="button">Chiudi</button></div>
+    <div class="m-score" id="mScore"></div>
+    <div class="seg m-tabs" role="tablist">
+      <button type="button" data-tab="lineups" aria-pressed="true">Formazioni</button>
+      <button type="button" data-tab="events" aria-pressed="false">Eventi</button>
+      <button type="button" data-tab="stats" aria-pressed="false">Statistiche</button>
+    </div>
+    <div id="mBody"><p class="note">Carico i dettagli…</p></div>
+    <p class="note" id="mFoot" style="font-size:.78rem"></p>
+  </section>
 </div>
 
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden>
@@ -872,6 +939,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     else if (c) src = c.live === true ? "In diretta" + (c.title ? " · " + c.title : "") + " · " + fmtViewers(c.viewers) + " spettatori"
       : c.live === false ? "Nessuna diretta in questo momento" : "Stato non disponibile";
     $("chanSrc").textContent = src;
+    if (typeof updateInfoButtons === "function") updateInfoButtons();
   }
 
   // ---------------------------------------------------------------- overlay + player
@@ -1279,10 +1347,12 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   }
   var tvFocused = null, calmTimer = null;
   function focusables() {
+    if (!$("matchSheet").hidden) return Array.prototype.filter.call($("matchSheet").querySelectorAll("button"),
+      function (el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !el.closest("[hidden]"); });
     if (!$("sheet").hidden) return Array.prototype.filter.call($("sheet").querySelectorAll("button, input, a.btn"),
       function (el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !el.disabled && !el.closest("[hidden]"); });
     return Array.prototype.filter.call(document.querySelectorAll(
-      ".card, #fixtures .fx, #events .watch, #unlockBtn, .head-right .toggle, #settings summary, #settings[open] select, #settings[open] input, #settings[open] .btn:not([hidden]), #favToggle, #allToggle, #loginForm input, #loginForm .btn"),
+      ".card, #infoBtn, #fixtures .fx, #events .watch, #unlockBtn, .head-right .toggle, #settings summary, #settings[open] select, #settings[open] input, #settings[open] .btn:not([hidden]), #favToggle, #allToggle, #loginForm input, #loginForm .btn"),
       function (el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !el.closest("[hidden]"); });
   }
   function tvFocus(el) {
@@ -1352,6 +1422,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   // Tasto Indietro: true se gestito dalla pagina, false se l'app può chiudersi (usato anche dall'app Fire TV).
   window.tvBack = function () {
     if (document.body.classList.contains("theater")) { theater(false); tvFocus(document.getElementById("ch-" + currentId)); return true; }
+    if (!$("matchSheet").hidden) { closeMatch(); return true; }
     if (!$("sheet").hidden) { closeSheet(); return true; }
     if ($("settings").open) { $("settings").open = false; return true; }
     return false;
@@ -1396,7 +1467,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
       return;
     }
     var typing = t === "INPUT" || t === "TEXTAREA" || (t === "SELECT" && !TV);
-    if (!TV && !$("sheet").hidden) return;           // con le impostazioni aperte i tasti non cambiano canale
+    if (!TV && (!$("sheet").hidden || !$("matchSheet").hidden)) return;           // con le impostazioni aperte i tasti non cambiano canale
     if (typing && !(TV && (key === "ArrowUp" || key === "ArrowDown") && t === "INPUT")) return;
     if (key >= "1" && key <= "9") { var c = order[Number(key) - 1]; if (c) tune(c.id); return; }
     if (key === "ChannelUp" || key === "PageUp" || code === 33 || code === 427) { e.preventDefault(); step(-1); return; }
@@ -1586,6 +1657,121 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     $("lgOpen").textContent = $("lgForm").hidden ? "Installa" : "Chiudi";
     if (!$("lgForm").hidden) { lgPoll(); setTimeout(function () { if (TV) tvFocus($("lgIp")); else $("lgIp").focus(); }, 60); }
   });
+
+  // ---------------------------------------------------------------- dettagli partita (formazioni, eventi, statistiche)
+  // Dati dal servizio risultati (ESPN), chiesti solo con il pannello aperto e al massimo ogni minuto:
+  // non passano da Telegram e non toccano il video.
+  var mTab = "lineups", mTimer = null, mData = null;
+  var STAT_IT = { "possession": "Possesso palla", "ball possession": "Possesso palla", "shots": "Tiri", "total shots": "Tiri",
+    "shots on target": "Tiri in porta", "on target": "Tiri in porta", "on goal": "Tiri in porta", "shots on goal": "Tiri in porta",
+    "corner kicks": "Calci d'angolo", "corners": "Calci d'angolo", "fouls": "Falli", "fouls committed": "Falli",
+    "yellow cards": "Ammonizioni", "red cards": "Espulsioni", "offsides": "Fuorigioco", "saves": "Parate",
+    "passes": "Passaggi", "accurate passes": "Passaggi riusciti", "pass completion %": "Precisione passaggi",
+    "tackles": "Contrasti", "effective tackles": "Contrasti vinti", "crosses": "Cross", "blocked shots": "Tiri respinti",
+    "interceptions": "Intercetti", "clearances": "Rinvii", "long balls": "Lanci lunghi" };
+  function evKind(k) {
+    k = (k || "").toLowerCase();
+    if (/own goal/.test(k)) return ["goal", "Autogol"];
+    if (/penalty.*(scored|goal)|goal.*penalty/.test(k)) return ["goal", "Gol (rigore)"];
+    if (/goal/.test(k)) return ["goal", "Gol"];
+    if (/red|second yellow/.test(k)) return ["red", "Espulsione"];
+    if (/yellow/.test(k)) return ["yellow", "Ammonizione"];
+    if (/sub/.test(k)) return ["sub", "Cambio"];
+    if (/penalty.*(miss|saved)/.test(k)) return ["", "Rigore sbagliato"];
+    if (/var/.test(k)) return ["", "VAR"];
+    return ["", k ? k.charAt(0).toUpperCase() + k.slice(1) : ""];
+  }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function renderMatch() {
+    var d = mData, body = $("mBody"); body.innerHTML = "";
+    if (!d) { body.appendChild(el("p", "note", "Carico i dettagli…")); return; }
+    if (d.error) { body.appendChild(el("p", "note bad", d.error)); return; }
+    var sc = $("mScore"); sc.innerHTML = "";
+    sc.appendChild(el("div", "tm", d.home || "")); sc.appendChild(el("div", "sc", (d.home_score || "0") + " – " + (d.away_score || "0")));
+    sc.appendChild(el("div", "tm", d.away || ""));
+    var st = el("div", "st" + (d.state === "in" ? " live" : ""), [d.state === "in" && d.clock ? d.clock : d.status, d.league, d.venue].filter(Boolean).join(" · "));
+    sc.appendChild(st);
+    $("mTitle").textContent = d.state === "in" ? "In diretta" : d.state === "post" ? "Finita" : "Partita";
+    if (mTab === "lineups") {
+      if (!d.lineups || !d.lineups.length) { body.appendChild(el("p", "note", "Le formazioni compaiono di solito un'ora prima del calcio d'inizio.")); return; }
+      var grid = el("div", "lu");
+      d.lineups.forEach(function (t) {
+        var col = el("div"); var h = el("h4", null, t.team); if (t.formation) h.appendChild(el("small", null, t.formation)); col.appendChild(h);
+        function list(arr) {
+          var ol = el("ol");
+          arr.forEach(function (p) {
+            var li = el("li", p.out ? "out" : ""); li.appendChild(el("b", null, p.n)); var nm = el("span", null, p.name);
+            li.appendChild(nm); var r = el("i", null, p.pos || "");
+            if (p.out) r.appendChild(el("span", "tag-s out", "esce")); if (p["in"]) r.appendChild(el("span", "tag-s in", "entra"));
+            li.appendChild(r); ol.appendChild(li);
+          });
+          return ol;
+        }
+        col.appendChild(list(t.starters || []));
+        if (t.bench && t.bench.length) { col.appendChild(el("div", "sub-title", "Panchina")); col.appendChild(list(t.bench)); }
+        grid.appendChild(col);
+      });
+      body.appendChild(grid);
+    } else if (mTab === "events") {
+      if (!d.events || !d.events.length) { body.appendChild(el("p", "note", d.state === "pre" ? "La partita non è ancora iniziata." : "Nessun evento per ora.")); return; }
+      var ul = el("ul", "evl");
+      d.events.slice().reverse().forEach(function (e) {
+        var k = evKind(e.kind); if (!k[1] && !e.who) return;
+        var li = el("li", e.side === "away" ? "away" : ""); li.appendChild(el("span", "mn", e.min || ""));
+        li.appendChild(el("span", "ic " + k[0])); var tx = el("span", null, e.who || k[1]);
+        if (e.who && k[1]) { tx.appendChild(document.createTextNode(" ")); tx.appendChild(el("small", null, k[1])); }
+        li.appendChild(tx); ul.appendChild(li);
+      });
+      body.appendChild(ul);
+    } else {
+      if (!d.stats || !d.stats.length) { body.appendChild(el("p", "note", "Statistiche non ancora disponibili.")); return; }
+      var box = el("div", "stl");
+      d.stats.forEach(function (x) {
+        var lbl = STAT_IT[(x.label || "").toLowerCase()] || x.label;
+        var hv = parseFloat(x.home) || 0, av = parseFloat(x.away) || 0, tot = hv + av;
+        var row = el("div", "str"); row.appendChild(el("b", null, x.home));
+        var mid = el("div", "lb"); mid.appendChild(el("span", null, lbl));
+        var bars = el("div", "bars"); var bh = el("i"), ba = el("i");
+        bh.style.width = (tot ? hv / tot * 100 : 50) + "%"; ba.style.width = (tot ? av / tot * 100 : 50) + "%";
+        bars.appendChild(bh); bars.appendChild(ba); mid.appendChild(bars); row.appendChild(mid);
+        row.appendChild(el("b", null, x.away)); box.appendChild(row);
+      });
+      body.appendChild(box);
+    }
+  }
+  function loadMatch() {
+    var id = currentId;
+    return api("/api/match/" + id).then(function (r) {
+      if (id !== currentId) return;
+      mData = r._status >= 400 ? { error: r.error || "Dettagli non disponibili." } : r;
+      $("mFoot").textContent = r._status >= 400 ? "" : "Dati ESPN · si aggiornano da soli ogni minuto mentre il pannello è aperto.";
+      renderMatch();
+    }).catch(function () {});
+  }
+  function openMatch() {
+    $("matchSheet").hidden = false; mData = null; $("mScore").innerHTML = ""; $("mBody").innerHTML = '<p class="note">Carico i dettagli…</p>';
+    loadMatch(); clearInterval(mTimer); mTimer = setInterval(loadMatch, 60000);
+    if (TV) tvFocus($("matchSheet").querySelector(".m-tabs button[aria-pressed=true]")); else $("mClose").focus();
+  }
+  function closeMatch() {
+    $("matchSheet").hidden = true; clearInterval(mTimer); mTimer = null;
+    if (TV) tvFocus($("infoBtn").hidden ? document.getElementById("ch-" + currentId) : $("infoBtn"));
+  }
+  Array.prototype.forEach.call(document.querySelectorAll(".m-tabs button"), function (b) {
+    b.addEventListener("click", function () {
+      mTab = b.dataset.tab;
+      Array.prototype.forEach.call(document.querySelectorAll(".m-tabs button"), function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+      renderMatch();
+    });
+  });
+  $("infoChip").addEventListener("click", openMatch);
+  $("infoBtn").addEventListener("click", openMatch);
+  $("mClose").addEventListener("click", closeMatch);
+  $("mBack").addEventListener("click", closeMatch);
+  function updateInfoButtons() {
+    var c = byId(currentId), ok = !!(c && c.live === true && c.match && c.match.details);
+    $("infoChip").hidden = !ok || TV; $("infoBtn").hidden = !ok;
+  }
 
   // ---------------------------------------------------------------- condividi e trasmetti
   function toast(text) {

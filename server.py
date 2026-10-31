@@ -614,7 +614,8 @@ def remembered(cid: int) -> dict | None:
     score = n.get("score")
     if fx and fx.get("home_score") not in (None, "") and fx.get("away_score") not in (None, ""):
         score = f"{fx['home_score']}-{fx['away_score']}"
-    return {"title": n["title"], "score": score, "league": n.get("league")}
+    return {"title": n["title"], "score": score, "league": n.get("league"),
+            "details": bool(config.DEMO or (fx and fx.get("code") and fx.get("id")))}
 
 
 def learn(cid: int, res: dict) -> None:
@@ -1049,6 +1050,29 @@ async def hlsjs(_: Request):
                         headers={"Cache-Control": "public, max-age=86400"})
 
 
+async def match_info(request: Request):
+    """Formazioni, eventi e statistiche della partita riconosciuta sul canale (da ESPN, mai da Telegram)."""
+    if not is_authed(request):
+        return need_auth()
+    cid = int(request.path_params["cid"])
+    if config.DEMO:
+        from matches import demo_details
+        return JSONResponse(demo_details())
+    n = App.names.get(cid) or {}
+    fx_list = _cached_fixtures() or (await today_matches()).get("matches") or []
+    fx = next((m for m in fx_list if n.get("fixture_id") and m.get("id") == n["fixture_id"]), None)
+    if not fx or not fx.get("code"):
+        return JSONResponse({"error": "Per questo canale non ho riconosciuto una partita con i dettagli disponibili."},
+                            status_code=404)
+    from matches import match_details
+    try:
+        data = await asyncio.wait_for(match_details(fx["code"], fx["id"]), 15)
+    except Exception as e:  # noqa: BLE001
+        log.info("Dettagli partita non disponibili: %s", e)
+        return JSONResponse({"error": "Dettagli della partita non disponibili in questo momento."}, status_code=502)
+    return JSONResponse({**data, "league": fx.get("league"), "start": fx.get("start")}, headers={"Cache-Control": "no-cache"})
+
+
 async def health(_: Request):
     """Per il programma di avvio: c'è una diretta in corso? (allora non si riavvia per aggiornare)"""
     return JSONResponse({"streaming": sum(1 for s in App.streamers.values() if s.running),
@@ -1065,6 +1089,7 @@ routes = [
     Route("/api/settings", settings, methods=["GET", "POST"]),
     Route("/api/preload", preload, methods=["GET", "POST"]),
     Route("/api/health", health),
+    Route("/api/match/{cid:int}", match_info),
     Route("/vendor/hls.min.js", hlsjs),
     Route("/api/account", account_login, methods=["POST"]),
     Route("/api/login", login, methods=["POST"]),
