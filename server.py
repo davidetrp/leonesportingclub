@@ -494,10 +494,11 @@ async def hls(request: Request):
     path = s.dir / name
     if not path.exists():
         return Response(status_code=404)
+    cors = {"Access-Control-Allow-Origin": "*"}   # Chromecast legge il flusso direttamente dal server
     if name.endswith(".m3u8"):
         return Response(path.read_bytes(), media_type="application/vnd.apple.mpegurl",
-                        headers={"Cache-Control": "no-cache, no-store"})
-    return FileResponse(path, media_type="video/mp2t", headers={"Cache-Control": "max-age=60"})
+                        headers={"Cache-Control": "no-cache, no-store", **cors})
+    return FileResponse(path, media_type="video/mp2t", headers={"Cache-Control": "max-age=60", **cors})
 
 
 # --------------------------------------------------------------------------- nome della partita dal video
