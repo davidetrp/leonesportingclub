@@ -10,6 +10,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import time
@@ -586,24 +587,48 @@ def _cached_fixtures() -> list[dict]:
     return (best or {}).get("matches") or []
 
 
+MULTI_WINDOW_S = 30 * 60    # due partite diverse lette entro mezz'ora (e giocate insieme) = Diretta Gol
+RECHECK_S = 150             # canale aperto con il nome già noto: riletto ogni 2,5 minuti (video già scaricato)
+MULTI_WORDS = re.compile(r"DIRETTA\s*GOL|DIRETTA\s*GOAL|GOL\s*SHOW|GOAL\s*SHOW|MULTI\s*PARTITA|MULTIPARTITA|TUTTI\s+I\s+GOL|CONFERENCE\s*CALL")
+
+
+def _fixture(fid) -> dict | None:
+    return next((m for m in _cached_fixtures() if fid and m.get("id") == fid), None)
+
+
+def _fixture_expired(fx: dict, learned: float, now: float) -> bool:
+    try:
+        from datetime import datetime
+        if now > datetime.fromisoformat(fx["start"]).timestamp() + NAME_MAX_S:
+            return True
+    except (KeyError, ValueError):
+        pass
+    return fx.get("state") == "post" and now - learned > 15 * 60
+
+
 def remembered(cid: int) -> dict | None:
-    """Nome imparato per il canale, se è ancora valido; con il punteggio aggiornato dai risultati in diretta."""
+    """Nome imparato per il canale, se è ancora valido; con il punteggio aggiornato dai risultati in diretta.
+    Per una Diretta Gol: il titolo «Diretta Gol» e le partite viste finora."""
     n = App.names.get(cid)
     if not n:
         return None
     now = time.time()
-    fx = next((m for m in _cached_fixtures() if n.get("fixture_id") and m.get("id") == n["fixture_id"]), None)
-    expired = now - n.get("learned", now) > NAME_MAX_S
-    if fx:
-        try:
-            from datetime import datetime
-            start = datetime.fromisoformat(fx["start"]).timestamp()
-            expired = now > start + NAME_MAX_S
-        except (KeyError, ValueError):
-            pass
-        if fx.get("state") == "post" and now - n.get("learned", now) > 15 * 60:
-            expired = True
+    learned = n.get("learned", now)
     off = App.offline_since.get(cid)
+    if n.get("multi"):
+        games = n.get("games") or []
+        fxs = [f for f in (_fixture(g.get("fid")) for g in games) if f]
+        expired = now - learned > NAME_MAX_S or (fxs and all(_fixture_expired(f, learned, now) for f in fxs))
+        if expired or (off and now - off > OFFLINE_FORGET_S):
+            App.names.pop(cid, None)
+            _save_names()
+            return None
+        return {"title": "Diretta Gol", "score": None, "league": n.get("league"), "multi": True,
+                "games": [g["title"] for g in games][:8], "details": False}
+    fx = _fixture(n.get("fixture_id"))
+    expired = now - learned > NAME_MAX_S
+    if fx:
+        expired = _fixture_expired(fx, learned, now)
     if expired or (off and now - off > OFFLINE_FORGET_S):
         App.names.pop(cid, None)
         _save_names()
@@ -615,16 +640,58 @@ def remembered(cid: int) -> dict | None:
             "details": bool(config.DEMO or (fx and fx.get("code") and fx.get("id")))}
 
 
-def learn(cid: int, res: dict) -> None:
+def _concurrent(fid_a, fid_b) -> bool:
+    """Le due partite si giocano (o si sono giocate) insieme? Senza dati, si suppone di sì."""
+    fa, fb = _fixture(fid_a), _fixture(fid_b)
+    if not fa or not fb:
+        return True
+    if "post" in (fa.get("state"), fb.get("state")) and "in" in (fa.get("state"), fb.get("state")):
+        return False                           # una è finita e l'altra è in corso: il canale è passato all'altra
+    try:
+        from datetime import datetime
+        return abs(datetime.fromisoformat(fa["start"]).timestamp() - datetime.fromisoformat(fb["start"]).timestamp()) < 90 * 60
+    except (KeyError, ValueError):
+        return True
+
+
+def learn(cid: int, res: dict | None, text: str = "") -> None:
+    """Aggiorna la memoria del canale con una lettura. Riconosce la Diretta Gol: più partite diverse,
+    giocate insieme, viste sullo stesso canale a breve distanza (o la scritta «Diretta Gol» nel riquadro)."""
+    now = time.time()
     old = App.names.get(cid)
+    flat = " ".join((text or "").upper().split())
+    says_multi = bool(MULTI_WORDS.search(flat))
+    if not res and not says_multi:
+        return
+    if old and old.get("multi"):
+        if res and res.get("matched") and all(g.get("fid") != res.get("fixture_id") for g in old.get("games", [])):
+            old["games"].append({"fid": res.get("fixture_id"), "title": res["title"]})
+            log.info("Canale %s (Diretta Gol): vista anche «%s»", cid, res["title"])
+            _save_names()
+        return
+    if says_multi or (old and res and res.get("matched") and old.get("fixture_id")
+                      and res.get("fixture_id") != old["fixture_id"]
+                      and now - old.get("seen", old.get("learned", now)) < MULTI_WINDOW_S
+                      and _concurrent(old["fixture_id"], res.get("fixture_id"))):
+        games = []
+        if old and old.get("fixture_id"):
+            games.append({"fid": old["fixture_id"], "title": old["title"]})
+        if res and res.get("matched") and all(g["fid"] != res.get("fixture_id") for g in games):
+            games.append({"fid": res.get("fixture_id"), "title": res["title"]})
+        App.names[cid] = {"multi": True, "games": games, "league": (res or old or {}).get("league"),
+                          "learned": now, "seen": now}
+        log.info("Canale %s: è una Diretta Gol (%s)", cid, ", ".join(g["title"] for g in games) or "scritta nel riquadro")
+        _save_names()
+        return
     if old and old.get("title") == res["title"]:
+        old["seen"] = now
         if res.get("score"):
             old["score"] = res["score"]
         return
     if old and old.get("fixture_id") and not res.get("matched"):
         return                                # un nome «vero» non si sostituisce con sigle lette a caso
     App.names[cid] = {"title": res["title"], "score": res.get("score"), "league": res.get("league"),
-                      "fixture_id": res.get("fixture_id"), "learned": time.time()}
+                      "fixture_id": res.get("fixture_id"), "learned": now, "seen": now}
     log.info("Canale %s: imparato «%s»", cid, res["title"])
     _save_names()
 
@@ -701,8 +768,7 @@ async def detect_channel(c: dict, fixtures: list[dict]) -> None:
             text = DemoSource.BUGS[c["id"] % len(DemoSource.BUGS)]
         res = scorebug.identify(text, fixtures)
         log.info("Canale %s (%s): letto «%s» → %s", c["id"], how, " ".join(text.split())[:80], res and res["title"])
-        if res:
-            learn(c["id"], res)
+        learn(c["id"], res, text)
         App.detected[c["id"]] = {"at": time.monotonic()}
     except asyncio.CancelledError:
         raise
@@ -733,8 +799,11 @@ async def scan_loop() -> None:
                     seg = __import__("scorebug").latest_segment(s.dir)
                     if seg:
                         await make_thumb(seg, c["id"])
+                # Senza nome: un tentativo ogni 45 s. Con il nome: una rilettura ogni 2,5 minuti, per accorgersi
+                # di una Diretta Gol o di un cambio di partita. Sempre dal video già scaricato (niente Telegram).
                 d = App.detected.get(c["id"])
-                if remembered(c["id"]) or (d and time.monotonic() - d["at"] < ATTEMPT_EVERY_S):
+                wait = RECHECK_S if remembered(c["id"]) else ATTEMPT_EVERY_S
+                if d and time.monotonic() - d["at"] < wait:
                     continue
                 if fixtures is None:
                     fixtures = (await today_matches()).get("matches") or []

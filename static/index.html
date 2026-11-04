@@ -890,6 +890,11 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
         card.querySelector(".s").textContent = c.match.title + (c.match.score ? "  " + c.match.score : "");
         card.querySelector(".s").classList.add("is-match");
         evEl.hidden = false; evEl.textContent = (TV ? "Canale: " : "📡 ") + label(c);
+        if (c.match.multi) {                     // Diretta Gol: più partite sullo stesso canale
+          var g = c.match.games || [];
+          evEl.textContent = (g.length ? g.length + " partite · " : "") + label(c);
+          card.title = g.join(" · ");
+        }
       } else {
         card.querySelector(".s").textContent = label(c);
         if (live && namesPending.indexOf(c.id) !== -1) { evEl.hidden = false; evEl.textContent = "Leggo la partita…"; evEl.classList.add("wait"); }
@@ -956,7 +961,8 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     var m = c && c.live === true ? c.match : null;
     $("chanName").textContent = m ? m.title + (m.score ? "  " + m.score : "") : c ? label(c) : "Nessun canale";
     var src = "Aggiungi un canale con il tasto +";
-    if (m) src = (TV ? "" : "📡 ") + "Canale Telegram: " + label(c) + (m.league ? " · " + m.league : "") + " · " + fmtViewers(c.viewers) + " spettatori";
+    if (m && m.multi) src = ((m.games || []).length ? "Partite: " + m.games.join(" · ") + " · " : "") + "Canale Telegram: " + label(c);
+    else if (m) src = (TV ? "" : "📡 ") + "Canale Telegram: " + label(c) + (m.league ? " · " + m.league : "") + " · " + fmtViewers(c.viewers) + " spettatori";
     else if (c && c.event) src = "⚽ " + c.event.name + (c.event.time ? " · " + c.event.time : "") + (c.live === true ? " · " + fmtViewers(c.viewers) + " spettatori" : " · non ancora in diretta");
     else if (c) src = c.live === true ? "In diretta" + (c.title ? " · " + c.title : "") + " · " + fmtViewers(c.viewers) + " spettatori"
       : c.live === false ? "Nessuna diretta in questo momento" : "Stato non disponibile";
