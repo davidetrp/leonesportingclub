@@ -311,6 +311,7 @@ body.tv .m-score .tm { font-size: 2.2vh; }
 body.tv .m-score .st, body.tv .m-tabs button, body.tv .lu h4 { font-size: 1.8vh; }
 body.tv .lu li, body.tv .evl li, body.tv .str { font-size: 1.7vh; }
 body.tv .info-btn { font-size: 1.6vh; padding: .8vh 1vw; }
+body.theater .info-btn::before { content: "→ "; }   /* a schermo intero si apre con la freccia destra */
 @media (max-width: 520px) { .info-btn { display: none !important; } }
 /* ---- Impostazioni: pannello a destra (a tutto schermo sul telefono) ---- */
 .sheet { position: fixed; inset: 0; z-index: 120; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
@@ -1431,6 +1432,12 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   function tvMove(dir) {
     var list = focusables();
     if (!tvFocused || list.indexOf(tvFocused) === -1) { tvFocus(document.getElementById("ch-" + currentId) || list[0]); return; }
+    // Dalla lista dei canali la freccia destra va dritta su «Formazioni e statistiche» (sotto il video);
+    // da lì la freccia sinistra torna al canale che stai guardando.
+    if (dir === "ArrowRight" && tvFocused.classList.contains("card") && !$("infoBtn").hidden && $("matchSheet").hidden && $("sheet").hidden) {
+      tvFocus($("infoBtn")); return;
+    }
+    if (dir === "ArrowLeft" && tvFocused === $("infoBtn")) { tvFocus(document.getElementById("ch-" + currentId) || list[0]); return; }
     var a = tvFocused.getBoundingClientRect(), ax = a.left + a.width / 2, ay = a.top + a.height / 2, best = null, bestScore = Infinity;
     list.forEach(function (el) {
       if (el === tvFocused) return;
@@ -1516,10 +1523,14 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
       if ((key === "ArrowRight" || key === "ArrowLeft") && order.length) step(key === "ArrowRight" ? 1 : -1);
       return;
     }
+    // Tasto Info o tasti colorati del telecomando: formazioni e statistiche, da qualsiasi schermata.
+    var infoKey = code === 457 || code === 403 || code === 404 || code === 405 || code === 406 || key === "Info" || key === "ColorF0Red" || key === "ColorF1Green" || key === "ColorF2Yellow" || key === "ColorF3Blue";
+    if (infoKey && !$("infoBtn").hidden) { e.preventDefault(); openMatch(); return; }
     if (document.body.classList.contains("theater")) {
       e.preventDefault();
       if (key === "ArrowUp") step(-1);
       else if (key === "ArrowDown") step(1);
+      else if (key === "ArrowRight" && !$("infoBtn").hidden) openMatch();   // a schermo intero: → apre formazioni e statistiche
       else showBanner();
       return;
     }
