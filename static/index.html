@@ -117,6 +117,13 @@ video { width: 100%; height: 100%; display: block; background: #000; object-fit:
   opacity: 0; transition: opacity .5s ease; }
 .overlay .ov-bg.on { opacity: 1; }
 .overlay.loading .big-num { display: none; }
+.ov-feed { max-width: min(46ch, 90%); display: grid; gap: 6px; margin-top: 6px; }
+.ov-live { font-weight: 700; color: var(--screen-ink); font-variant-numeric: tabular-nums; }
+.ov-live b { color: var(--live); margin-right: 6px; }
+.ov-note { color: var(--screen-muted); font-size: .9rem; min-height: 2.6em; transition: opacity .35s; text-wrap: balance; }
+.ov-note.fade { opacity: 0; }
+body.tv .ov-live { font-size: 2vh; }
+body.tv .ov-note { font-size: 1.7vh; }
 .overlay.loading .msg { font-family: var(--font-display); font-weight: 800; font-size: 1.5rem; text-transform: uppercase; letter-spacing: .02em; }
 .overlay .spin { width: 44px; height: 44px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .16); border-top-color: var(--accent);
   animation: ov-spin .85s linear infinite; }
@@ -653,6 +660,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
             <div class="spin" id="ovSpin" hidden></div>
             <div class="msg" id="ovMsg">Caricamento…</div>
             <div class="sub" id="ovSub"></div>
+            <div class="ov-feed" id="ovFeed" hidden><div class="ov-live" id="ovLive"></div><div class="ov-note" id="ovNote"></div></div>
           </div>
           <div class="bug" id="bug" hidden><span class="tag live">Live</span><span class="tag" id="bugCh">CH 1</span></div>
           <div class="ctrl" id="ctrl" hidden>
@@ -975,6 +983,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   function overlay(msg, sub, busy) {
     var c = byId(currentId), bg = $("ovBg"), u = thumbUrl(c);
     $("overlay").hidden = false; $("overlay").classList.toggle("loading", !!busy);
+    if (!busy) stopFeed();
     $("ovNum").textContent = currentId ? position(currentId) : "–"; $("ovSpin").hidden = !busy;
     if (u) { bg.style.backgroundImage = "url(" + u + ")"; bg.classList.add("on"); } else bg.classList.remove("on");
     $("ovMsg").textContent = msg; $("ovSub").textContent = sub || "";
@@ -990,8 +999,52 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     if (secs > 25) sub = "Telegram è lento a rispondere, continuo a provare…";
     else if (secs > 12) sub = serverMsg === "Riaggancio la diretta…" ? serverMsg : "Ancora qualche secondo…";
     overlay(title, sub, true);
+    startFeed(c);
   }
-  function hideOverlay() { if (TV && !tvFocused) tvFocus(document.getElementById("ch-" + currentId)); $("overlay").hidden = true; $("bug").hidden = false; $("ctrl").hidden = false; $("unmute").hidden = !video.muted; }
+  // Mentre carica: minuto, punteggio e qualche momento della partita (gol, cartellini, ultima azione),
+  // a rotazione. Dati ESPN già in memoria sul server: nessuna richiesta a Telegram, niente peso sul video.
+  var feedFor = null, feedTimer = null, feedItems = [], feedIdx = 0;
+  function stopFeed() { clearInterval(feedTimer); feedTimer = null; feedFor = null; $("ovFeed").hidden = true; }
+  function showNote() {
+    if (!feedItems.length) return;
+    var n = $("ovNote"); n.classList.add("fade");
+    setTimeout(function () { n.textContent = feedItems[feedIdx % feedItems.length]; feedIdx++; n.classList.remove("fade"); }, 350);
+  }
+  function startFeed(c) {
+    if (!c) return;
+    if (feedFor !== null && feedFor !== c.id) stopFeed();       // cambiato canale: via i dati di quello prima
+    if (c.match && c.match.multi && (c.match.games || []).length) {          // Diretta Gol: le partite in onda
+      if (feedFor === c.id) return;
+      feedFor = c.id; feedItems = c.match.games.map(function (g) { return "In collegamento: " + g; }); feedIdx = 0;
+      $("ovLive").textContent = "Diretta Gol · " + c.match.games.length + " partite"; $("ovFeed").hidden = false;
+      showNote(); clearInterval(feedTimer); feedTimer = setInterval(showNote, 4500); return;
+    }
+    if (!(c.match && c.match.details) || feedFor === c.id) return;
+    feedFor = c.id;
+    api("/api/match/" + c.id).then(function (d) {
+      if (feedFor !== c.id || d._status >= 400 || !$("overlay").classList.contains("loading")) return;
+      var live = $("ovLive"); live.innerHTML = "";
+      if (d.state === "in" && d.clock) live.appendChild(el("b", null, d.clock));
+      live.appendChild(document.createTextNode((d.home || "") + " " + (d.home_score || "0") + " – " + (d.away_score || "0") + " " + (d.away || "")));
+      var items = [];
+      var lastC = (d.commentary || []).slice(-1)[0];
+      if (lastC) items.push("Ultima azione" + (lastC.min ? " (" + lastC.min + ")" : "") + ": " + lastC.text);
+      (d.events || []).slice(-4).reverse().forEach(function (e) {
+        var k = evKind(e.kind); if (!k[1]) return;
+        items.push((e.min ? e.min + " " : "") + k[1] + (e.who ? ": " + e.who : ""));
+      });
+      (d.stats || []).forEach(function (x) {
+        var lbl = (STAT_IT[(x.label || "").toLowerCase()] || "");
+        if (lbl === "Possesso palla" || lbl === "Tiri in porta" || lbl === "Tiri")
+          items.push(lbl + ": " + x.home + (lbl === "Possesso palla" ? "%" : "") + " – " + x.away + (lbl === "Possesso palla" ? "%" : ""));
+      });
+      if (d.state === "pre" && d.lineups && d.lineups.length) items.push("Formazioni ufficiali disponibili: premi Info per vederle");
+      if (!items.length && d.venue) items.push("Si gioca allo " + d.venue);
+      feedItems = items; feedIdx = 0; $("ovFeed").hidden = false; showNote();
+      clearInterval(feedTimer); feedTimer = setInterval(showNote, 4500);
+    }).catch(function () {});
+  }
+  function hideOverlay() { stopFeed(); if (TV && !tvFocused) tvFocus(document.getElementById("ch-" + currentId)); $("overlay").hidden = true; $("bug").hidden = false; $("ctrl").hidden = false; $("unmute").hidden = !video.muted; }
 
   function stopPlayer() {
     playing = false;

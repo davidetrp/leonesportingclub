@@ -296,11 +296,20 @@ def parse_summary(data: dict) -> dict:
             continue
         stats.append({"label": _txt(s.get("label") or s.get("name")), "home": _txt(s.get("displayValue")), "away": _txt(o.get("displayValue"))})
 
+    # Telecronaca scritta (ESPN la dà in inglese per i campionati principali): le ultime azioni.
+    comm = []
+    for c in data.get("commentary") or []:
+        text = _txt(c.get("text"))
+        if text:
+            comm.append({"seq": c.get("sequence") or 0, "min": _txt((c.get("time") or {}).get("displayValue")), "text": text[:220]})
+    comm.sort(key=lambda x: x["seq"])
+    comm = [{"min": x["min"], "text": x["text"]} for x in comm[-6:]]
+
     venue = _txt(((comp.get("venue") or {}) or (data.get("gameInfo") or {}).get("venue") or {}).get("fullName"))
     return {"home": home.get("name"), "away": away.get("name"), "home_score": home.get("score"), "away_score": away.get("score"),
             "status": _txt((status.get("type") or {}).get("detail") or (status.get("type") or {}).get("description")),
             "clock": _txt(status.get("displayClock")), "state": _txt((status.get("type") or {}).get("state")),
-            "venue": venue, "lineups": lineups, "events": events, "stats": stats}
+            "venue": venue, "lineups": lineups, "events": events, "stats": stats, "commentary": comm}
 
 
 async def match_details(code: str, event_id: str) -> dict:
@@ -337,6 +346,8 @@ def demo_summary() -> dict:
                        "participants": [{"athlete": {"displayName": "Fantasista Sei"}}]},
                       {"type": {"text": "Substitution"}, "clock": {"displayValue": "60'"}, "team": {"id": "1"},
                        "participants": [{"athlete": {"displayName": "Riserva Quattro"}}, {"athlete": {"displayName": "Attaccante Tre"}}]}],
+        "commentary": [{"sequence": 1, "time": {"displayValue": "65'"}, "text": "Corner, Juventus. Conceded by Difensore Inter."},
+                       {"sequence": 2, "time": {"displayValue": "66'"}, "text": "Attempt saved. Attaccante Tre (Juventus) right footed shot from the centre of the box."}],
         "boxscore": {"teams": [{"homeAway": "home", "statistics": [{"name": "possessionPct", "label": "Possession", "displayValue": "54.2"},
                                                                   {"name": "totalShots", "label": "Shots", "displayValue": "11"},
                                                                   {"name": "shotsOnTarget", "label": "On Target", "displayValue": "4"}]},
