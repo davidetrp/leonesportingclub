@@ -175,6 +175,16 @@ class TelegramSource:
         self.too_big_at = 0.0                 # …e quando
         self.stats = {"chunks": 0, "waits": 0, "floods": 0, "net": 0, "slow": 0}
         self.stats_at = time.monotonic()
+        self._lag_task: asyncio.Task | None = None
+        self._lag_end: int | None = None
+
+    async def _check_lag(self) -> None:
+        try:
+            end = await self.reader.stream_end_ms(max_wait=0)
+            if end:
+                self._lag_end = end
+        except Exception:  # noqa: BLE001 - controllo facoltativo
+            pass
 
     def _status(self, text: str) -> None:
         if self.on_status:
@@ -266,7 +276,7 @@ class TelegramSource:
     async def _rejoin(self, why: str) -> None:
         self.rejoins += 1
         log.info("Rientro nella diretta (%d/%d): %s", self.rejoins, MAX_REJOINS, why)
-        self._status(f"Il video non arriva: rientro nella diretta ({self.rejoins}/{MAX_REJOINS})…")
+        self._status("Riaggancio la diretta…")
         self._clear_prefetch()
         await self.reader.rejoin()
 
@@ -283,16 +293,16 @@ class TelegramSource:
 
     async def next(self):
         self.jumped = False
-        if self.count and self.count % RESYNC_EVERY == 0:
-            try:
-                end = await self.reader.stream_end_ms(max_wait=0)
-            except Exception:  # noqa: BLE001 - controllo facoltativo
-                end = None
-            if end and self.time_ms < end - MAX_LAG_MS:
-                log.info("Troppo indietro di %d ms: salto avanti", end - self.time_ms)
-                self.time_ms = (end // CHUNK_MS) * CHUNK_MS - 2000
-                self.jumped = True
-                self._clear_prefetch()
+        # Controllo «sono rimasto indietro?» in sottofondo: la domanda a Telegram può dover aspettare il suo
+        # turno (qualche secondo) e qui non deve mai fermare il video.
+        if self.count and self.count % RESYNC_EVERY == 0 and not (self._lag_task and not self._lag_task.done()):
+            self._lag_task = asyncio.create_task(self._check_lag())
+        if self._lag_end and self.time_ms < self._lag_end - MAX_LAG_MS:
+            log.info("Troppo indietro di %d ms: salto avanti", self._lag_end - self.time_ms)
+            self.time_ms = (self._lag_end // CHUNK_MS) * CHUNK_MS - 2000
+            self.jumped = True
+            self._clear_prefetch()
+        self._lag_end = None
         waited = 0.0
         while True:
             try:
@@ -302,7 +312,7 @@ class TelegramSource:
                 self._note_not_ready(self.time_ms, e)
                 self.stats["waits"] += 1
                 if not self.count:
-                    self._status(f"Aspetto il primo pezzo di video… (Telegram: {e or 'non pronto'}, {int(waited)} s)")
+                    self._status("Arriva il video…")
                     # Primo pezzo che non arriva: come quando apri la diretta su Telegram, rientro.
                     if waited > FIRST_CHUNK_WAIT_S and self.rejoins < MAX_REJOINS:
                         await self._rejoin(f"nessun pezzo dopo {FIRST_CHUNK_WAIT_S} s ({e})")
@@ -328,11 +338,14 @@ class TelegramSource:
             except Resync as e:
                 self.resyncs = getattr(self, "resyncs", 0) + 1
                 log.info("Risincronizzo (%d): %s", self.resyncs, e)
-                self._status(f"Riprovo a sincronizzarmi… (Telegram: {e})")
+                self._status("Riaggancio la diretta…")
                 self._clear_prefetch()
                 if self.resyncs > 8:
                     raise RuntimeError(f"Telegram non dà i pezzi della diretta ({e})")
-                await asyncio.sleep(1)
+                if self.resyncs >= 2 and self.rejoins < MAX_REJOINS:
+                    await self._rejoin(f"sincronizzazione non riuscita ({e})")   # di solito basta rientrare
+                else:
+                    await asyncio.sleep(0.5)
                 self.time_ms = await self.reader.start_ms()
                 self.jumped = True
         self.time_ms += CHUNK_MS
@@ -348,6 +361,8 @@ class TelegramSource:
 
     async def close(self) -> None:
         self._clear_prefetch()
+        if self._lag_task:
+            self._lag_task.cancel()
         await self.reader.leave()
 
 
@@ -430,13 +445,15 @@ class SlotStreamer:
         self.state, self.message = "starting", "Mi collego alla diretta…"
         self.task = asyncio.create_task(self._run(), name=f"slot{self.slot}")
 
-    async def stop(self) -> None:
+    async def stop(self, reason: str = "", message: str = "") -> None:
         if self.running:
             self.task.cancel()
             try:
                 await self.task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+        if reason:                               # es. «replaced»: un altro dispositivo ha aperto un altro canale
+            self.state, self.message = reason, message
 
     async def _run(self) -> None:
         shutil.rmtree(self.dir, ignore_errors=True)

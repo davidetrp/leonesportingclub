@@ -31,9 +31,21 @@ log = logging.getLogger("telegram_live")
 
 GETFILE_LIMIT = 128 * 1024      # come Telegram Desktop per i pezzi delle dirette
 FETCH_TIMEOUT_S = 8             # una richiesta di pezzo che non torna entro 8 s è persa: si riapre la connessione
-CHANNELS_MIN_GAP = 8.0
+CHANNELS_MIN_GAP = 4.0
 _channels_lock = asyncio.Lock()
 _last_channels_call = 0.0
+
+# Ultimo punto noto di ogni diretta: {id della chiamata: (tempo del pezzo in ms, quando l'abbiamo visto)}.
+# Serve a ripartire subito (anche dopo un FLOOD_WAIT) senza chiedere a Telegram dove è arrivato lo stream:
+# lo stream avanza in tempo reale, quindi basta sommare i secondi passati.
+_EDGE: dict[int, tuple[int, float]] = {}
+
+
+def _remember_edge(call_id: int, t: int) -> None:
+    old = _EDGE.get(call_id)
+    now = time.monotonic()
+    if not old or t >= old[0] + (now - old[1]) * 1000 - 3000:
+        _EDGE[call_id] = (t, now)
 
 
 # --------------------------------------------------------------------------- live lookup
@@ -280,22 +292,40 @@ class CallReader:
                 _last_channels_call = time.monotonic()
         if not res.channels:
             return None
-        return max(c.last_timestamp_ms for c in res.channels)
+        end = max(c.last_timestamp_ms for c in res.channels)
+        _remember_edge(self.info.call.id, end)
+        return end
+
+    def estimate_edge(self, max_age_s: float = 3 * 3600) -> int | None:
+        """Dove dovrebbe essere ora la diretta, dall'ultimo pezzo visto (None se non l'abbiamo mai vista)."""
+        e = _EDGE.get(self.info.call.id) if self.info else None
+        if not e or time.monotonic() - e[1] > max_age_s:
+            return None
+        return int(e[0] + (time.monotonic() - e[1]) * 1000)
 
     def server_now_ms(self) -> int:
         offset = getattr(getattr(getattr(self.client, "_sender", None), "_state", None), "time_offset", 0) or 0
         return int((time.time() + offset) * 1000)
 
     async def start_ms(self, buffer_ms: int = 3000) -> int:
-        """Punto di partenza della diretta. Come Telegram Desktop: se Telegram non dice dove finisce lo
-        stream (FLOOD_WAIT o lista vuota), si parte dall'ora attuale del server in millisecondi."""
+        """Punto di partenza della diretta, nel modo più veloce possibile:
+        1. se l'abbiamo vista da poco (lettura dei nomi, diretta di prima) stimo dove è arrivata e verifico con un pezzo;
+        2. altrimenti lo chiedo a Telegram, aspettando la sua pausa (di solito 3 s) invece di tirare a indovinare;
+        3. solo se non risponde, cerco il punto giusto pezzo per pezzo."""
+        est = self.estimate_edge()
+        if est is not None:
+            t = (est // CHUNK_MS) * CHUNK_MS - buffer_ms
+            for back in (0, 2000, 5000):
+                if await self._probe(t - back) == "ok":
+                    log.info("Riparto dal punto stimato della diretta (%s)", t - back)
+                    return t - back
+        end = -1
         try:
-            end = await self.stream_end_ms(max_wait=0)
+            end = await self.stream_end_ms(max_wait=8)
             log.info("Fine dello stream: %s", end)
         except errors.FloodWaitError as e:
-            log.info("Fine dello stream non disponibile (Telegram dice %ss): parto dall'ora del server", e.seconds)
-            end = None
-        if end:
+            log.info("Fine dello stream non disponibile (Telegram dice %ss): la cerco", e.seconds)
+        if end and end > 0:
             return (end // CHUNK_MS) * CHUNK_MS - buffer_ms
         edge = await self.find_live_edge(self.server_now_ms() - buffer_ms, getattr(self, "status_cb", None))
         return edge - 2 * CHUNK_MS
@@ -316,6 +346,35 @@ class CallReader:
                 return "small:" + str(e)
         return "flood"
 
+    async def _find_relative(self) -> int:
+        """Ultimo pezzo di una diretta con l'orologio relativo (ms dall'inizio): raddoppio finché è troppo avanti,
+        poi cerco il confine in mezzo. Circa 20 richieste anche per una diretta in corso da ore."""
+        lo, hi = 0, CHUNK_MS
+        while True:
+            r = await self._probe(hi)
+            log.info("Ricerca diretta (orologio relativo): %s → %s", hi, r)
+            if r == "flood":
+                raise Resync("Telegram chiede di rallentare")
+            if r == "big" or "TIME_INVALID" in r:
+                break
+            lo = hi
+            hi *= 2
+            if hi > 400 * 3600 * 1000:
+                raise NotLive()
+        while hi - lo > CHUNK_MS:
+            mid = ((lo + hi) // 2 // CHUNK_MS) * CHUNK_MS
+            r = await self._probe(mid)
+            if r == "flood":
+                raise Resync("Telegram chiede di rallentare")
+            if r == "big" or "TIME_INVALID" in r:
+                hi = mid
+            else:
+                lo = mid
+        for back in range(0, 6000, CHUNK_MS):
+            if await self._probe(lo - back) == "ok":
+                return lo - back
+        raise NotLive()
+
     async def find_live_edge(self, guess: int, status=None) -> int:
         """Trova l'ultimo pezzo disponibile partendo da una stima, senza sapere quale orologio usa la diretta."""
         def say(t):
@@ -328,6 +387,10 @@ class CallReader:
             return a
         if r == "flood":
             raise Resync("Telegram chiede di rallentare")
+        if a > 10**12 and r.startswith("small:"):
+            # L'ora di oggi non è valida: questa diretta conta il tempo dall'inizio della trasmissione.
+            say("Cerco il punto giusto della diretta…")
+            return await self._find_relative()
         say("Cerco il punto giusto della diretta…")
         direction = -1 if r == "big" else 1          # troppo avanti → indietro; errore → avanti
         far, far_r = a, r
@@ -408,9 +471,13 @@ class CallReader:
                 if msg != getattr(self, "_last_err", None):
                     self._last_err = msg
                     log.info("Chunk %s: errore %s %s %s", time_ms, type(e).__name__, getattr(e, "code", ""), msg)
-                if "TIME_TOO_BIG" in msg or "FLOOD" in msg:
-                    raise ChunkNotReady(msg) from e
-                if "GROUPCALL_JOIN_MISSING" in msg or "GROUPCALL_FORBIDDEN" in msg:
+                if "TIME_TOO_BIG" in msg or "FLOOD" in msg or "VIDEO_CHANNEL_INVALID" in msg:
+                    raise ChunkNotReady(msg) from e      # pezzo non ancora pronto (anche VIDEO_CHANNEL_INVALID al bordo)
+                # Telegram a volte manda «non sei nella diretta» con il testo generico BAD_REQUEST:
+                # lo riconosco anche dal tipo di errore, e rientro invece di risincronizzarmi all'infinito.
+                kind = type(e).__name__.upper()
+                if ("GROUPCALL_JOIN_MISSING" in msg or "GROUPCALL_FORBIDDEN" in msg
+                        or "JOINMISSING" in kind or "GROUPCALLFORBIDDEN" in kind):
                     await self.rejoin_if_stale(started)
                     raise ChunkNotReady(msg) from e
                 if (getattr(e, "code", 0) or 0) >= 500 or "INTERNAL" in msg or "TIMEOUT" in msg:
@@ -424,5 +491,6 @@ class CallReader:
                 raise Resync("redirect CDN")
             data += res.bytes
             if first_only or len(res.bytes) < GETFILE_LIMIT:
+                _remember_edge(self.info.call.id, time_ms)
                 return data
             offset += GETFILE_LIMIT

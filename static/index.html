@@ -111,6 +111,24 @@ h1 { font-family: var(--font-display); font-weight: 900; font-size: 2.3rem; lett
 .screen { position: relative; aspect-ratio: 16 / 9; max-width: 100%; background: #000; }
 video { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
 .overlay { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; padding: 18px; background: var(--screen); }
+.overlay { overflow: hidden; }
+.overlay > * { position: relative; }
+.overlay .ov-bg { position: absolute; inset: -24px; background: center / cover no-repeat; filter: blur(14px) brightness(.42) saturate(1.15);
+  opacity: 0; transition: opacity .5s ease; }
+.overlay .ov-bg.on { opacity: 1; }
+.overlay.loading .big-num { display: none; }
+.overlay.loading .msg { font-family: var(--font-display); font-weight: 800; font-size: 1.5rem; text-transform: uppercase; letter-spacing: .02em; }
+.overlay .spin { width: 44px; height: 44px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .16); border-top-color: var(--accent);
+  animation: ov-spin .85s linear infinite; }
+@keyframes ov-spin { to { transform: rotate(360deg); } }
+body.tv .overlay .spin { width: 6vh; height: 6vh; border-width: .45vh; }
+body.tv .overlay.loading .msg { font-size: 3.4vh; }
+/* Card con l'anteprima del video sulla destra */
+.card.has-thumb { background-image: linear-gradient(90deg, var(--panel) 42%, color-mix(in srgb, var(--panel) 35%, transparent) 100%), var(--thumb);
+  background-size: auto, cover; background-position: 0 0, right center; background-repeat: no-repeat; }
+.card .ev.wait { background: linear-gradient(90deg, var(--muted) 0%, var(--ink) 40%, var(--muted) 80%); background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.6s linear infinite; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .overlay .big-num { font-family: var(--font-display); font-weight: 900; font-size: 5.5rem; line-height: .85; color: var(--screen-muted); }
 .overlay .msg { max-width: 34ch; color: var(--screen-ink); text-wrap: balance; }
 .overlay .sub { color: var(--screen-muted); font-size: .9rem; max-width: 40ch; }
@@ -629,9 +647,10 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
           <video id="video" playsinline muted autoplay></video>
           <img class="logo-bug" src="/static/logo.svg" alt="" aria-hidden="true">
           <div class="overlay" id="overlay">
+            <div class="ov-bg" id="ovBg"></div>
             <div class="big-num" id="ovNum">–</div>
+            <div class="spin" id="ovSpin" hidden></div>
             <div class="msg" id="ovMsg">Caricamento…</div>
-            <div class="bar" id="ovBar" hidden></div>
             <div class="sub" id="ovSub"></div>
           </div>
           <div class="bug" id="bug" hidden><span class="tag live">Live</span><span class="tag" id="bugCh">CH 1</span></div>
@@ -796,7 +815,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   var favs = load("cs-favs", []);
   var favMode = load("cs-fav-mode", false);
   var showAll = load("cs-show-all", false);    // false = solo canali in diretta con almeno 50 spettatori
-  var MIN_VIEWERS = 50, hiddenCount = 0;
+  var MIN_VIEWERS = 50, hiddenCount = 0, namesPending = [];
   currentId = load("cs-current-id", null);
   var linkCh = /[?&]ch=(\d+)/.exec(location.search);       // link condiviso: apre quel canale
   if (linkCh) { currentId = Number(linkCh[1]); store("cs-current-id", currentId); }
@@ -872,8 +891,10 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
         evEl.hidden = false; evEl.textContent = (TV ? "Canale: " : "📡 ") + label(c);
       } else {
         card.querySelector(".s").textContent = label(c);
-        if (c.event) { evEl.hidden = false; evEl.textContent = "⚽ " + c.event.name + (c.event.time ? " · " + c.event.time : ""); }
+        if (live && namesPending.indexOf(c.id) !== -1) { evEl.hidden = false; evEl.textContent = "Leggo la partita…"; evEl.classList.add("wait"); }
+        else if (c.event) { evEl.hidden = false; evEl.textContent = "⚽ " + c.event.name + (c.event.time ? " · " + c.event.time : ""); }
       }
+      if (live && c.thumb) { card.classList.add("has-thumb"); card.style.setProperty("--thumb", "url(" + thumbUrl(c) + ")"); }
       var st = card.querySelector(".st");
       if (live) { st.classList.add("live"); st.querySelector(".t").textContent = "Live · " + fmtViewers(c.viewers) + (TV ? "" : " 👁"); }
       else st.querySelector(".t").textContent = c.live === false ? "Offline" : "Stato non disponibile";
@@ -943,10 +964,25 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   }
 
   // ---------------------------------------------------------------- overlay + player
+  function thumbUrl(c) { return c && c.thumb ? "/api/thumb/" + c.id + "?t=" + c.thumb : ""; }
   function overlay(msg, sub, busy) {
-    $("overlay").hidden = false; $("ovNum").textContent = currentId ? position(currentId) : "–";
-    $("ovMsg").textContent = msg; $("ovSub").textContent = sub || ""; $("ovBar").hidden = !busy;
+    var c = byId(currentId), bg = $("ovBg"), u = thumbUrl(c);
+    $("overlay").hidden = false; $("overlay").classList.toggle("loading", !!busy);
+    $("ovNum").textContent = currentId ? position(currentId) : "–"; $("ovSpin").hidden = !busy;
+    if (u) { bg.style.backgroundImage = "url(" + u + ")"; bg.classList.add("on"); } else bg.classList.remove("on");
+    $("ovMsg").textContent = msg; $("ovSub").textContent = sub || "";
     $("bug").hidden = true; $("ctrl").hidden = true;
+  }
+  // Caricamento: anteprima sfocata del canale, il nome della partita e una rotellina. Niente messaggi tecnici:
+  // una frase compare solo se ci mette più del solito.
+  var loadStart = 0;
+  function loading(c, serverMsg) {
+    var secs = (Date.now() - loadStart) / 1000;
+    var title = c ? ((c.match && c.live === true && c.match.title) || label(c)) : "";
+    var sub = c && c.match && c.live === true ? label(c) : "";
+    if (secs > 25) sub = "Telegram è lento a rispondere, continuo a provare…";
+    else if (secs > 12) sub = serverMsg === "Riaggancio la diretta…" ? serverMsg : "Ancora qualche secondo…";
+    overlay(title, sub, true);
   }
   function hideOverlay() { if (TV && !tvFocused) tvFocus(document.getElementById("ch-" + currentId)); $("overlay").hidden = true; $("bug").hidden = false; $("ctrl").hidden = false; $("unmute").hidden = !video.muted; }
 
@@ -996,18 +1032,20 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     if (token !== tuneToken) return;
     var st = r.stream, c = byId(id);
     if (st === "live") { autoTries = 0; startPlayer(id); return; }
-    if (st === "starting") { overlay("Mi collego alla diretta…", (r.message && r.message !== "Mi collego alla diretta…") ? r.message : label(c), true); return; }
+    if (st === "starting") { loading(c, r.message); return; }
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
     stopPlayer();
-    if (st === "offline") {
+    if (st === "replaced") {                   // un altro dispositivo ha aperto un altro canale: non lo riprendo da solo
+      overlay("Canale aperto su un altro dispositivo", (r.message || "") + " Tocca il canale per guardarlo qui.");
+    } else if (st === "offline") {
       overlay("In attesa della diretta", "Su " + label(c) + " ora non trasmette nessuno. Riprovo da solo ogni 30 secondi.");
       resumeLater(id, token, 30000);
     } else if (st === "unsupported") overlay("Diretta non leggibile", r.message);
     else if (st === "idle") {
-      if (autoTries < 6) { overlay("Riprendo la diretta…", label(c), true); resumeLater(id, token, 800); }
+      if (autoTries < 6) { loading(c, ""); resumeLater(id, token, 800); }
       else overlay("Canale in pausa", "Tocca di nuovo il canale per riprendere.");
     } else if (autoTries < 8) {
-      overlay("Riprovo tra pochi secondi…", r.message || "Errore sconosciuto.", true);
+      loading(c, ""); $("ovSub").textContent = "La diretta si è interrotta, riprovo…";
       resumeLater(id, token, 5000);
     } else overlay("Qualcosa non va", (r.message || "Errore sconosciuto.") + " Tocca di nuovo il canale per riprovare.");
   }
@@ -1015,13 +1053,15 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
   function tune(id, auto) {
     var c = byId(id);
     if (!c) return;
+    if (!auto) userPicked = true;               // da qui in poi niente avvio automatico al termine della lettura nomi
     autoTries = auto ? autoTries + 1 : 0;
     currentId = id; store("cs-current-id", id);
     var token = ++tuneToken;
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
     stopPlayer(); renderGrid(); renderInfo();
     if (editing !== "new") fillForm();
-    overlay(auto ? "Riprendo la diretta…" : "Mi collego alla diretta…", label(c), true);
+    if (!auto) loadStart = Date.now();
+    loading(c, "");
     api("/api/play/" + id, { method: "POST" }).then(function (r) {
       handleStatus(id, token, r);
       if (token !== tuneToken || !(r.stream === "starting" || r.stream === "live")) return;
@@ -1032,7 +1072,7 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
             .catch(function () { if (token === tuneToken) poll(); });
         }, playing ? 5000 : 1000);
       })();
-    }).catch(function () { if (token === tuneToken) { overlay("Server non raggiungibile", "Riprovo tra pochi secondi…", true); resumeLater(id, token, 5000); } });
+    }).catch(function () { if (token === tuneToken) { loading(c, ""); $("ovSub").textContent = "Il server non risponde, riprovo…"; resumeLater(id, token, 5000); } });
   }
 
   $("unmute").addEventListener("click", function () { video.muted = false; store("cs-sound", true); var p = video.play(); if (p && p.catch) p.catch(function () {}); $("unmute").hidden = true; });
@@ -1817,50 +1857,42 @@ body.tv .sheet .tvfocus { outline-offset: .3vh; }
     cs.src = "https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"; document.head.appendChild(cs);
   }
 
-  // Lo splash resta finché il server ha caricato spettatori e nomi delle partite (massimo ~15 s), poi si parte.
-  function preloadThenStart(done) {
-    var t0 = Date.now(), finished = false;
-    var last = {};
-    function finish() { if (finished) return; finished = true; $("spStep").textContent = ""; done(last); }
-    function poll() {
-      api("/api/preload").then(function (r) {
-        last = r;
-        if (r.step) $("spStep").textContent = r.step;
-        if (!r.running || Date.now() - t0 > 20000) finish(); else setTimeout(poll, 600);
-      }).catch(finish);
-    }
-    $("spStep").textContent = "Controllo le dirette…";
-    api("/api/preload", { method: "POST" }).then(function () { setTimeout(poll, 400); }).catch(finish);
-    setTimeout(finish, 21000);
+  // Avvio: lo splash dura solo l'animazione; intanto il server legge i nomi delle partite. Dopo lo splash si
+  // vedono subito tutti i canali, i nomi arrivano uno alla volta («Leggo la partita…») e quando sono tutti
+  // pronti parte da solo l'ultimo canale guardato. Se tocchi un canale prima, parte subito quello.
+  var userPicked = false;
+  function followNames(onDone) {
+    api("/api/preload").then(function (r) {
+      namesPending = r.pending || [];
+      if (r.step) $("spStep").textContent = r.step;
+      if (r.running) { setTimeout(function () { refresh().catch(function () {}); followNames(onDone); }, 2500); }
+      else { namesPending = []; refresh().catch(function () {}).then(onDone); }
+    }).catch(function () { namesPending = []; onDone(); });
+  }
+  function startCurrent() {
+    if (userPicked || playing) return;
+    if (!byId(currentId) || !visible(byId(currentId))) currentId = order.length ? order[0].id : null;
+    if (currentId) tune(currentId);
+    else { overlay("Nessun canale", channels.length ? "Nessun canale in diretta con abbastanza spettatori." : "Tocca + per aggiungere il primo canale."); fillForm(); }
   }
 
   function boot() {
-    preloadThenStart(function (pre) {
-      refresh().then(function () {
-        if (!byId(currentId) || !visible(byId(currentId))) currentId = order.length ? order[0].id : null;
-        // Se il server sta ancora leggendo i nomi degli altri canali, non apro niente da solo: aprire una diretta
-        // fermerebbe la lettura (l'account Telegram sta in una diretta alla volta). Scegli tu quando vuoi.
-        if (currentId && pre && pre.bg && !linkCh) {
-          renderInfo(); overlay("Scegli un canale", "Sto leggendo i nomi delle altre partite: compaiono nella lista tra pochi secondi.");
-          (function follow() {
-            setTimeout(function () {
-              refresh().catch(function () {});
-              api("/api/preload").then(function (r) {
-                if (r.bg) follow();
-                else if (!playing && $("ovMsg").textContent === "Scegli un canale") overlay("Scegli un canale", "Tocca un canale per guardarlo.");
-              }).catch(function () {});
-            }, 5000);
-          })();
-        } else if (currentId) tune(currentId);
-        else { overlay("Nessun canale", channels.length ? "Nessun canale in diretta con abbastanza spettatori." : "Tocca + per aggiungere il primo canale."); fillForm(); }
-        if (TV) tvFocus(document.getElementById("ch-" + currentId) || document.querySelector(".card") || $("allToggle"));
-        hideSplash();
-      }).catch(function () { hideSplash(); });
-      loadFixtures(); loadEvents();
-      setInterval(function () { refresh().catch(function () {}); }, 20000);
-      setInterval(function () { loadEvents(); }, 90000);
-      setInterval(loadFixtures, 120000);
+    $("spStep").textContent = "Controllo le dirette…";
+    api("/api/preload", { method: "POST" }).catch(function () {}).then(function () {
+      return refresh().catch(function () {});
+    }).then(function () {
+      if (!byId(currentId) || !visible(byId(currentId))) currentId = order.length ? order[0].id : currentId;
+      renderGrid(); renderInfo();
+      if (linkCh && currentId) { userPicked = true; tune(currentId); }
+      else if (currentId && byId(currentId)) overlay(label(byId(currentId)), "Preparo i canali…", true);
+      if (TV) tvFocus(document.getElementById("ch-" + currentId) || document.querySelector(".card") || $("allToggle"));
+      hideSplash();
+      followNames(startCurrent);
     });
+    loadFixtures(); loadEvents();
+    setInterval(function () { refresh().catch(function () {}); }, 20000);
+    setInterval(function () { loadEvents(); }, 90000);
+    setInterval(loadFixtures, 120000);
   }
   boot();
 })();

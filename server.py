@@ -46,7 +46,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("server")
 
 MAX_CHANNELS = 60
-MAX_STREAMS = 3          # canali diversi in riproduzione contemporanea
+# Un solo canale alla volta: Telegram tiene l'account in una diretta alla volta (vedi play()).
 STALE_S = 8              # un canale non chiesto da 8 s è stato lasciato (chi guarda lo chiede ogni 2–5 s)
 STATIC = config.BASE_DIR / "static"
 HLS_ROOT = config.DATA_DIR / "hls"
@@ -254,6 +254,7 @@ async def state(request: Request):
         det = remembered(c["id"]) if st.get("live") else None
         out.append({**c, **st,
                     "match": det,
+                    "thumb": int(_thumb_at.get(c["id"], 0)) or None,
                     "event": {"name": ev["name"], "time": ev.get("time"), "league": ev.get("league")} if ev else None,
                     "stream": stv.state if stv else "idle",
                     "message": stv.message if stv else ""})
@@ -330,21 +331,17 @@ async def play(request: Request):
         return JSONResponse({"stream": "error", "message": App.tg_error}, status_code=503)
     s = streamer(cid)
     if request.method == "POST" and not s.running:
-        # Più dispositivi possono guardare canali diversi (fino a MAX_STREAMS): oltre, chiudo quello
-        # che nessuno guarda da più tempo. Lo stesso canale su più dispositivi usa un solo download.
-        others = [o for o_id, o in App.streamers.items() if o_id != cid and o.running]
-        # Canali lasciati da poco (nessuno li chiede da qualche secondo): si chiudono subito. Telegram tiene
-        # l'account in una diretta alla volta, e restando aperti fanno errori che rallentano quella nuova.
-        for o in [o for o in others if time.monotonic() - o.last_access > STALE_S]:
-            log.info("Chiudo il canale %s: lasciato per aprire il %s", o.slot, cid)
-            await o.stop()
-            others.remove(o)
-        while len(others) >= MAX_STREAMS:
-            oldest = min(others, key=lambda o: o.last_access)
-            log.info("Troppi canali aperti: chiudo il canale %s (inattivo da più tempo)", oldest.slot)
-            await oldest.stop()
-            others.remove(oldest)
-    if request.method == "POST" and s.state in ("idle", "offline", "error", "unsupported"):
+        # Telegram tiene l'account in UNA diretta alla volta: entrare in un'altra butta fuori quella in corso
+        # (e le due si rubano il posto a vicenda, con BAD_REQUEST continui). Quindi un solo canale aperto:
+        # chi apre un canale nuovo lo prende, gli altri dispositivi vedono un avviso. Lo stesso canale
+        # su più dispositivi va benissimo (un solo download).
+        for o_id, o in list(App.streamers.items()):
+            if o_id != cid and o.running:
+                busy = time.monotonic() - o.last_access <= STALE_S
+                log.info("Chiudo il canale %s per aprire il %s%s", o.slot, cid, " (lo guardava un altro dispositivo)" if busy else "")
+                await o.stop("replaced", f"Su un altro dispositivo è stato aperto «{ch['name']}». Telegram permette "
+                             "una diretta alla volta per account.") if busy else await o.stop()
+    if request.method == "POST" and s.state in ("idle", "offline", "error", "unsupported", "replaced"):
         App.live_cache.pop(ch["peer_id"], None)
         await cancel_snapshot()
         s.start()
@@ -639,6 +636,39 @@ def note_live(cid: int, live) -> None:
         App.offline_since.pop(cid, None)
 
 
+THUMBS = config.DATA_DIR / "anteprime"
+THUMB_EVERY_S = 120          # canale aperto: anteprima aggiornata ogni 2 minuti (dal video già scaricato)
+_thumb_at: dict[int, float] = {}
+
+
+async def make_thumb(src: Path, cid: int) -> None:
+    """Piccola immagine del video (480 px) per la scheda del canale e per lo schermo di caricamento."""
+    THUMBS.mkdir(exist_ok=True)
+    out = THUMBS / f"{cid}.jpg"
+    tmp = THUMBS / f"{cid}.tmp.jpg"
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-frames:v", "1",
+        "-vf", "scale=480:-2", "-q:v", "7", str(tmp),
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    try:
+        await asyncio.wait_for(proc.wait(), 15)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return
+    if proc.returncode == 0 and tmp.exists():
+        os.replace(tmp, out)
+        _thumb_at[cid] = time.time()
+
+
+async def thumb(request: Request):
+    if not is_authed(request):
+        return need_auth()
+    f = THUMBS / f"{int(request.path_params['cid'])}.jpg"
+    if not f.exists():
+        return Response(status_code=404)
+    return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "max-age=60"})
+
+
 async def detect_channel(c: dict, fixtures: list[dict]) -> None:
     import scorebug
     import tempfile
@@ -664,6 +694,8 @@ async def detect_channel(c: dict, fixtures: list[dict]) -> None:
             finally:
                 App.snapshot = None
             how = "pezzo di diretta"
+        if src:
+            await make_thumb(src, c["id"])
         text = await scorebug.read_text(src) if src else ""
         if config.DEMO and not text:
             text = DemoSource.BUGS[c["id"] % len(DemoSource.BUGS)]
@@ -697,6 +729,10 @@ async def scan_loop() -> None:
                     continue
                 # Nome già imparato: non si legge più. Altrimenti un tentativo ogni 45 s dal video già scaricato
                 # (niente traffico verso Telegram), finché non compare il riquadro del punteggio.
+                if time.time() - _thumb_at.get(c["id"], 0) > THUMB_EVERY_S:
+                    seg = __import__("scorebug").latest_segment(s.dir)
+                    if seg:
+                        await make_thumb(seg, c["id"])
                 d = App.detected.get(c["id"])
                 if remembered(c["id"]) or (d and time.monotonic() - d["at"] < ATTEMPT_EVERY_S):
                     continue
@@ -715,9 +751,7 @@ async def scan_loop() -> None:
 _preload = {"running": False, "done": 0, "total": 0, "step": ""}
 
 
-SPLASH_BUDGET_S = 8        # oltre al canale con più spettatori, altri canali solo se lo splash non dura troppo
-FIRST_MAX_S = 15            # tempo massimo per il canale con più spettatori
-NEXT_MAX_S = 20             # tempo massimo per ognuno degli altri (in sottofondo)
+NEXT_MAX_S = 20             # tempo massimo per leggere il nome di un canale
 
 
 def _someone_watching() -> bool:
@@ -725,10 +759,9 @@ def _someone_watching() -> bool:
 
 
 async def _run_preload() -> None:
-    """Splash: legge subito il canale con più spettatori, poi altri finché ci stanno in ~8 s.
-    Il resto si legge in sottofondo dopo lo splash, ma solo finché nessuno guarda una diretta:
-    Telegram tiene l'account in una diretta alla volta, entrare in un'altra interromperebbe quella in visione."""
-    rest = []
+    """Legge i nomi delle partite di tutti i canali in diretta, uno alla volta, dal più seguito.
+    L'app intanto mostra già la lista; finita la lettura apre da sola l'ultimo canale guardato.
+    Si ferma appena qualcuno apre una diretta (Telegram tiene l'account in una diretta alla volta)."""
     try:
         channels = load_channels()
         now = time.monotonic()
@@ -743,70 +776,40 @@ async def _run_preload() -> None:
             fixtures = []
         for c, st in zip(channels, statuses):
             note_live(c["id"], st.get("live"))
-        # Solo i canali senza nome in memoria e non provati negli ultimi 10 minuti: un ingresso per canale.
         recent = lambda cid: App.detected.get(cid) and time.monotonic() - App.detected[cid]["at"] < 600  # noqa: E731
         todo = [c for c, st in sorted(zip(channels, statuses), key=lambda x: -(x[1].get("viewers") or 0))
                 if st.get("live") and (st.get("viewers") or 0) >= MIN_VIEWERS
                 and not remembered(c["id"]) and not recent(c["id"])]
-        _preload["total"] = len(todo)
+        _preload.update(total=len(todo), pending=[c["id"] for c in todo])
         import scorebug
         if not todo or (not config.DEMO and not await scorebug.engine()):
             return
-        t0 = time.monotonic()
         for i, c in enumerate(todo):
-            if i > 0 and time.monotonic() - t0 >= SPLASH_BUDGET_S:
-                rest = todo[i:]
-                break
             if _someone_watching():
-                rest = todo[i:]
                 break
             _preload["step"] = f"Leggo le partite in diretta… {i + 1} di {len(todo)}"
-            limit = FIRST_MAX_S if i == 0 else max(3.0, SPLASH_BUDGET_S + 4 - (time.monotonic() - t0))
-            try:
-                await asyncio.wait_for(detect_channel(c, fixtures), limit)
-            except asyncio.TimeoutError:
-                log.info("Canale %s: nome partita non letto in tempo", c["id"])
-            _preload["done"] = i + 1
-    except Exception:  # noqa: BLE001
-        log.exception("Preload")
-    finally:
-        _preload.update(running=False, step="", pending=len(rest), bg=bool(rest))   # bg subito: l'app lo vede già
-    if rest:
-        asyncio.create_task(_background_names(rest))
-
-
-async def _background_names(rest: list[dict]) -> None:
-    """Dopo lo splash: gli altri canali uno alla volta, solo mentre nessuno guarda una diretta."""
-    _preload["bg"] = True
-    try:
-        fixtures = (await today_matches()).get("matches") or []
-        for c in rest:
-            if _someone_watching() or remembered(c["id"]):
-                continue                      # chi guarda ha la precedenza: questo canale si leggerà dopo
-            st = await live_status(c["peer_id"])
-            if not st.get("live"):
-                continue
             try:
                 await asyncio.wait_for(detect_channel(c, fixtures), NEXT_MAX_S)
             except asyncio.TimeoutError:
                 log.info("Canale %s: nome partita non letto in tempo", c["id"])
-            _preload["pending"] = max(0, _preload.get("pending", 1) - 1)
+            _preload["done"] = i + 1
+            _preload["pending"] = [x["id"] for x in todo[i + 1:]]
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001
-        log.exception("Nomi in sottofondo")
+        log.exception("Preload")
     finally:
-        _preload.update(bg=False, pending=0)
+        _preload.update(running=False, step="", pending=[])
 
 
 async def preload(request: Request):
     """POST: avvia il caricamento di spettatori e nomi partita (lo fa lo splash). GET: a che punto è."""
     if not is_authed(request):
         return need_auth()
-    if request.method == "POST" and not _preload["running"] and not _preload.get("bg"):
-        _preload.update(running=True, done=0, total=0, pending=0, step="Controllo le dirette…")
+    if request.method == "POST" and not _preload["running"]:
+        _preload.update(running=True, done=0, total=0, pending=[], step="Controllo le dirette…")
         asyncio.create_task(_run_preload())
-    return JSONResponse({k: _preload.get(k) for k in ("running", "done", "total", "step", "bg", "pending")})
+    return JSONResponse({k: _preload.get(k) for k in ("running", "done", "total", "step", "pending")})
 
 
 # --------------------------------------------------------------------------- lifecycle
@@ -822,6 +825,10 @@ async def lifespan(_app):
         await connect_telegram()
     App.last_activity = time.monotonic()
     App.names = _load_names()
+    if THUMBS.exists():                       # anteprime di prima del riavvio
+        for f in THUMBS.glob("*.jpg"):
+            if f.stem.isdigit() and time.time() - f.stat().st_mtime < 3 * 3600:
+                _thumb_at[int(f.stem)] = f.stat().st_mtime
     scan = asyncio.create_task(scan_loop())
     rest = asyncio.create_task(rest_loop())
     yield
@@ -1090,6 +1097,7 @@ routes = [
     Route("/api/preload", preload, methods=["GET", "POST"]),
     Route("/api/health", health),
     Route("/api/match/{cid:int}", match_info),
+    Route("/api/thumb/{cid:int}", thumb),
     Route("/vendor/hls.min.js", hlsjs),
     Route("/api/account", account_login, methods=["POST"]),
     Route("/api/login", login, methods=["POST"]),
