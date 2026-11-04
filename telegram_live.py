@@ -30,6 +30,7 @@ from chunks import CHUNK_MS, ChunkNotReady, NotLive, Resync, Unsupported  # noqa
 log = logging.getLogger("telegram_live")
 
 GETFILE_LIMIT = 128 * 1024      # come Telegram Desktop per i pezzi delle dirette
+JOIN_SETTLE_S = 10             # secondi dopo l'ingresso in cui Telegram può rispondere «non valido» per pezzi validi
 FETCH_TIMEOUT_S = 8             # una richiesta di pezzo che non torna entro 8 s è persa: si riapre la connessione
 CHANNELS_MIN_GAP = 4.0
 _channels_lock = asyncio.Lock()
@@ -292,6 +293,9 @@ class CallReader:
                 _last_channels_call = time.monotonic()
         if not res.channels:
             return None
+        if not getattr(self, "_logged_channels", False):
+            self._logged_channels = True
+            log.info("Canali dello stream: %s", [(c.channel, c.scale, c.last_timestamp_ms) for c in res.channels])
         end = max(c.last_timestamp_ms for c in res.channels)
         _remember_edge(self.info.call.id, end)
         return end
@@ -320,19 +324,30 @@ class CallReader:
                     log.info("Riparto dal punto stimato della diretta (%s)", t - back)
                     return t - back
         end = -1
-        try:
-            end = await self.stream_end_ms(max_wait=8)
-            log.info("Fine dello stream: %s", end)
-        except errors.FloodWaitError as e:
-            log.info("Fine dello stream non disponibile (Telegram dice %ss): la cerco", e.seconds)
+        for attempt in range(3):
+            try:
+                end = await self.stream_end_ms(max_wait=8)
+                log.info("Fine dello stream: %s", end)
+            except errors.FloodWaitError as e:
+                log.info("Fine dello stream non disponibile (Telegram dice %ss): la cerco", e.seconds)
+                break
+            if end:
+                break
+            if time.monotonic() - self._joined_at > JOIN_SETTLE_S:
+                break
+            await asyncio.sleep(1.5)                     # appena entrati Telegram può dire «nessuno stream»: riprovo
         if end and end > 0:
-            return (end // CHUNK_MS) * CHUNK_MS - buffer_ms
+            base = (end // CHUNK_MS) * CHUNK_MS
+            for back in (buffer_ms, 1000, 0, 5000):      # il primo pezzo valido vicino alla fine
+                if await self._probe(base - back) == "ok":
+                    return base - back
+            return base - buffer_ms
         edge = await self.find_live_edge(self.server_now_ms() - buffer_ms, getattr(self, "status_cb", None))
         return edge - 2 * CHUNK_MS
 
     async def _probe(self, t: int) -> str:
-        """Prova a scaricare il pezzo al tempo t: 'ok', 'big' (troppo avanti), 'small' (altro errore)."""
-        for _ in range(6):
+        """Prova a scaricare il pezzo al tempo t: 'ok', 'big' (troppo avanti), 'small:…' (altro errore)."""
+        for _ in range(8):
             try:
                 await self.fetch(t, first_only=True)
                 return "ok"
@@ -340,8 +355,13 @@ class CallReader:
                 reason = str(e)
                 if "TIME_TOO_BIG" in reason:
                     return "big"
-                m = re.search(r"(\d+)", reason)
-                await asyncio.sleep(min(int(m.group(1)) + 0.5 if m else 1.0, 5))
+                m = re.search(r"FLOOD_WAIT_(\d+)", reason)
+                if m:                                   # pausa chiesta da Telegram: la rispetto
+                    await asyncio.sleep(min(int(m.group(1)) + 0.3, 6))
+                elif "APPENA_ENTRATO" in reason or reason in ("RETE", "TIMEOUT"):
+                    await asyncio.sleep(1.0)            # appena entrati o rete: riprovo tra un secondo
+                else:
+                    return "small:" + reason
             except Resync as e:
                 return "small:" + str(e)
         return "flood"
@@ -471,8 +491,11 @@ class CallReader:
                 if msg != getattr(self, "_last_err", None):
                     self._last_err = msg
                     log.info("Chunk %s: errore %s %s %s", time_ms, type(e).__name__, getattr(e, "code", ""), msg)
-                if "TIME_TOO_BIG" in msg or "FLOOD" in msg or "VIDEO_CHANNEL_INVALID" in msg:
-                    raise ChunkNotReady(msg) from e      # pezzo non ancora pronto (anche VIDEO_CHANNEL_INVALID al bordo)
+                if "TIME_TOO_BIG" in msg or "FLOOD" in msg:
+                    raise ChunkNotReady(msg) from e
+                if ("TIME_INVALID" in msg or "VIDEO_CHANNEL_INVALID" in msg) and time.monotonic() - self._joined_at < JOIN_SETTLE_S:
+                    # Appena entrati, per qualche secondo Telegram rifiuta anche pezzi che esistono: si riprova lì.
+                    raise ChunkNotReady("APPENA_ENTRATO " + msg) from e
                 # Telegram a volte manda «non sei nella diretta» con il testo generico BAD_REQUEST:
                 # lo riconosco anche dal tipo di errore, e rientro invece di risincronizzarmi all'infinito.
                 kind = type(e).__name__.upper()
